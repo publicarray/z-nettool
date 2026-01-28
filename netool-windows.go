@@ -3,25 +3,34 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/StackExchange/wmi"
 	"github.com/fatih/color"
 )
 
 const (
-	CaptureTime = 3 // seconds to listen for DHCP offers
+	DHCPCaptureTime = 3  // seconds to listen for DHCP offers
+	LLDPCaptureTime = 33 // seconds to listen for LLDP
+	PktmonFile      = "PktMon-lldp.etl"
+	PktmonTxt       = "PktMon-lldp.txt"
 )
 
 type DHCPServer struct {
@@ -54,6 +63,7 @@ func main() {
 	fmt.Println(color.New(color.FgCyan, color.Bold).Sprint("=== Network Report ==="))
 
 	printInterfaceInfo(*ifaceName)
+	printLLDP(*ifaceName)
 	printConnectivity()
 	printDHCP(*ifaceName)
 
@@ -150,6 +160,259 @@ func printInterfaceInfo(ifaceName string) {
 	fmt.Println("  Link:", link)
 }
 
+type LLDPInfo struct {
+	ChassisID         string
+	PortID            string
+	TTL               uint16
+	PortDescription   string
+	SystemDescription string
+	SystemName        string
+	VLAN              int
+}
+
+var hexLineRegex = regexp.MustCompile(`0x[0-9a-fA-F]{4}:\s+((?:[0-9a-fA-F]{4}\s*)+)`)
+
+// Transform UTF16 to UTF8 because Windows PktMon logs are often UTF16
+func DecodeUTF16(data []byte) (string, error) {
+	if len(data) < 2 {
+		return string(data), nil
+	}
+	// Check for BOM or just try to decode
+	u16s := make([]uint16, len(data)/2)
+	err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &u16s)
+	if err != nil {
+		return "", err
+	}
+	return string(utf16.Decode(u16s)), nil
+}
+
+func printLLDP(iface string) {
+	fmt.Println("\nSwitch / VLAN Info (LLDP)")
+
+	// Stop previous capture if exists
+	exec.Command("pktmon", "stop").Run()
+	os.Remove(PktmonFile)
+	os.Remove(PktmonTxt)
+
+	// Start capture
+	start := exec.Command("pktmon", "start", "--capture", "--pkt-size", "1600", "--etw", "-f", "ethernet.type==0x88cc", "--file-name", PktmonFile)
+	if err := start.Run(); err != nil {
+		fmt.Println("  [!] Failed to start pktmon. Are you running as Admin?", err)
+		return
+	}
+
+	// Channel to signal the progress indicator to stop
+	done := make(chan bool)
+	go showProgress(LLDPCaptureTime, done)
+
+	// Wait for the capture window
+	time.Sleep(LLDPCaptureTime * time.Second)
+
+	// Stop capture and stop the spinner
+	exec.Command("pktmon", "stop").Run()
+	done <- true
+	fmt.Println("")
+
+	// Convert ETL to Text
+	exec.Command("pktmon", "etl2txt", PktmonFile, "--hex", "--out", PktmonTxt).Run()
+
+	parseLLDPFromTxt(PktmonTxt)
+}
+
+// showProgress creates a terminal spinner and countdown
+func showProgress(seconds int, done chan bool) {
+	chars := []string{"|", "/", "-", "\\"}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	startTime := time.Now()
+	i := 0
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			elapsed := int(time.Since(startTime).Seconds())
+			remaining := seconds - elapsed
+			if remaining < 0 {
+				remaining = 0
+			}
+			// \r returns the cursor to the start of the line
+			fmt.Printf("\r  [%s] Listening for LLDP packets... %ds remaining ", chars[i%len(chars)], remaining)
+			i++
+		}
+	}
+}
+func parseLLDPFromTxt(path string) {
+	rawBytes, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	content := ""
+	if len(rawBytes) > 2 && (rawBytes[1] == 0x00 || rawBytes[0] == 0xFF) {
+		content, _ = DecodeUTF16(rawBytes)
+	} else {
+		content = string(rawBytes)
+	}
+
+	var currentHex strings.Builder
+	scanner := bufio.NewScanner(strings.NewReader(content))
+
+	// Use a map to deduplicate results
+	seenPackets := make(map[string]bool)
+
+	fmt.Printf("%-20s | %-10s | %-6s | %-15s | %s\n", "System Name", "Port", "VLAN", "Chassis ID", "Description")
+	fmt.Println(strings.Repeat("-", 90))
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.Contains(line, "PktGroupId") {
+			if currentHex.Len() > 0 {
+				displayLLDP(currentHex.String(), seenPackets)
+				currentHex.Reset()
+			}
+		}
+
+		if strings.Contains(line, "0x") && strings.Contains(line, ":") {
+			parts := strings.Split(line, ":")
+			if len(parts) > 1 {
+				currentHex.WriteString(cleanHexChars(parts[1]))
+			}
+		}
+	}
+	if currentHex.Len() > 0 {
+		displayLLDP(currentHex.String(), seenPackets)
+	}
+}
+
+func displayLLDP(rawHex string, seen map[string]bool) {
+	fullHex := strings.ToLower(rawHex)
+	idx := strings.Index(fullHex, "88cc")
+	if idx == -1 {
+		return
+	}
+
+	payload := fullHex[idx+4:]
+	info, err := ParseLLDPHex(payload)
+	if err != nil || info == nil || info.SystemName == "" {
+		return
+	}
+
+	// Create a unique key for deduplication
+	key := fmt.Sprintf("%s-%s-%s", info.ChassisID, info.PortID, info.SystemName)
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+
+	vlanStr := "N/A"
+	if info.VLAN != -1 {
+		vlanStr = fmt.Sprintf("%d", info.VLAN)
+	}
+
+	// Trim long descriptions for the CLI table
+	desc := info.SystemDescription
+	if len(desc) > 30 {
+		desc = desc[:27] + "..."
+	}
+
+	fmt.Printf("%-20s | %-10s | %-6s | %-15s | %s\n",
+		info.SystemName, info.PortDescription, vlanStr, info.ChassisID, desc)
+}
+
+func cleanHexChars(input string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			return r
+		}
+		return -1
+	}, input)
+}
+
+func processRawHex(fullHex string) {
+	fullHex = strings.ToLower(fullHex)
+
+	// 3. Look for the LLDP EtherType (88cc)
+	idx := strings.Index(fullHex, "88cc")
+	if idx == -1 {
+		// Log this for debugging but keep it quiet for non-LLDP packets
+		return
+	}
+
+	fmt.Printf("[DEBUG] Found LLDP marker (88cc) at index %d. Extracting payload...\n", idx)
+
+	// Payload starts after the 4 characters of "88cc"
+	payload := fullHex[idx+4:]
+	info, err := ParseLLDPHex(payload)
+
+	if err != nil {
+		fmt.Printf("[DEBUG] Parse error: %v\n", err)
+		return
+	}
+
+	if info != nil && (info.SystemName != "" || info.ChassisID != "") {
+		vlanStr := "N/A"
+		if info.VLAN != -1 {
+			vlanStr = fmt.Sprintf("%d", info.VLAN)
+		}
+		fmt.Printf("%-20s | %-15s | %-15s | %s\n",
+			info.SystemName, info.PortDescription, vlanStr, info.ChassisID)
+	} else {
+		fmt.Println("[DEBUG] Packet parsed but contained no System Name or Chassis ID.")
+	}
+}
+
+func ParseLLDPHex(hexStr string) (*LLDPInfo, error) {
+	data, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Added SystemDescription to your existing LLDPInfo struct
+	type ExtendedInfo struct {
+		LLDPInfo
+		SystemDescription string
+	}
+
+	info := &ExtendedInfo{}
+	info.VLAN = -1
+	offset := 0
+
+	for offset+2 <= len(data) {
+		header := binary.BigEndian.Uint16(data[offset : offset+2])
+		tlvType := int(header >> 9)
+		tlvLen := int(header & 0x01FF)
+		offset += 2
+
+		if tlvType == 0 || offset+tlvLen > len(data) {
+			break
+		}
+
+		val := data[offset : offset+tlvLen]
+		switch tlvType {
+		case 1: // Chassis ID
+			info.ChassisID = hex.EncodeToString(val[1:])
+		case 2: // Port ID
+			info.PortID = hex.EncodeToString(val[1:])
+		case 4: // Port Description
+			info.PortDescription = strings.TrimSpace(string(val))
+		case 5: // System Name
+			info.SystemName = strings.TrimSpace(string(val))
+		case 6: // System Description
+			info.SystemDescription = strings.TrimSpace(string(val))
+		case 127: // VLAN
+			if len(val) >= 6 && hex.EncodeToString(val[:3]) == "0080c2" && val[3] == 0x01 {
+				info.VLAN = int(binary.BigEndian.Uint16(val[4:6]))
+			}
+		}
+		offset += tlvLen
+	}
+	return &info.LLDPInfo, nil
+}
+
 // ---------------- Connectivity ----------------
 
 func printConnectivity() {
@@ -204,7 +467,7 @@ func printDHCP(ifaceName string) {
 		return
 	}
 
-	servers, err := probeDHCP(iface, time.Duration(CaptureTime)*time.Second)
+	servers, err := probeDHCP(iface, time.Duration(DHCPCaptureTime)*time.Second)
 	if err != nil {
 		fmt.Println("  [!] DHCP probe failed:", err)
 		fmt.Println("      Tip: run as Administrator (binding UDP :68 may require elevation).")
@@ -259,8 +522,7 @@ func probeDHCP(iface *net.Interface, listenFor time.Duration) (map[string]*DHCPS
 	discover := buildDHCPDiscover(xid, iface.HardwareAddr)
 
 	bcast := &net.UDPAddr{IP: net.IPv4bcast, Port: 67}
-	// Send a couple times (helps on noisy networks)
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 1; i++ {
 		_, _ = conn.WriteToUDP(discover, bcast)
 		time.Sleep(150 * time.Millisecond)
 	}
