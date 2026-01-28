@@ -21,9 +21,10 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unsafe"
 
-	"github.com/StackExchange/wmi"
 	"github.com/fatih/color"
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -67,6 +68,8 @@ func main() {
 	printConnectivity()
 	printDHCP(*ifaceName)
 
+	os.Remove(PktmonFile)
+	os.Remove(PktmonTxt)
 	fmt.Println("\nPress ENTER to exit...")
 	fmt.Scanln()
 }
@@ -96,11 +99,6 @@ func getActiveInterface() (*net.Interface, error) {
 }
 
 // ---------------- Interface Info ----------------
-
-type Win32_NetworkAdapter struct {
-	Name  string
-	Speed *uint64
-}
 
 func printInterfaceInfo(ifaceName string) {
 	iface, err := net.InterfaceByName(ifaceName)
@@ -141,16 +139,7 @@ func printInterfaceInfo(ifaceName string) {
 		}
 	}
 
-	link := "[unknown]"
-	var adapters []Win32_NetworkAdapter
-	q := wmi.CreateQuery(&adapters, "")
-	if wmi.Query(q, &adapters) == nil {
-		for _, a := range adapters {
-			if a.Name == ifaceName && a.Speed != nil {
-				link = fmt.Sprintf("%d Mbps", *a.Speed/1e6)
-			}
-		}
-	}
+	link := getLinkSpeed(ifaceName)
 
 	fmt.Println("\nInterface:")
 	fmt.Println("  Name:", ifaceName)
@@ -158,6 +147,85 @@ func printInterfaceInfo(ifaceName string) {
 	fmt.Println("  IPv4:", ipv4)
 	fmt.Println("  IPv6:", ipv6)
 	fmt.Println("  Link:", link)
+}
+
+func getLinkSpeed(ifaceName string) string {
+	adapters, err := getAdapters()
+	if err != nil {
+		panic(err)
+	}
+	link := "Unknown"
+	for _, a := range adapters {
+		if a.OperStatus != windows.IfOperStatusUp {
+			continue
+		}
+
+		speedName := classifySpeed(a.ReceiveLinkSpeed)
+		if ifaceName == windows.UTF16PtrToString(a.FriendlyName) {
+			link = speedName
+		}
+
+		fmt.Printf("Adapter: %s\n", windows.UTF16PtrToString(a.FriendlyName))
+		fmt.Printf("  Speed RX: %.2f Gbps\n", float64(a.ReceiveLinkSpeed)/1e9)
+		fmt.Printf("  Speed TX: %.2f Gbps\n", float64(a.TransmitLinkSpeed)/1e9)
+		fmt.Printf("  Type: %s\n", speedName)
+	}
+	return link
+}
+
+func getAdapters() ([]*windows.IpAdapterAddresses, error) {
+	var size uint32
+	err := windows.GetAdaptersAddresses(
+		windows.AF_UNSPEC,
+		windows.GAA_FLAG_INCLUDE_PREFIX,
+		0,
+		nil,
+		&size,
+	)
+	if err != windows.ERROR_BUFFER_OVERFLOW {
+		return nil, err
+	}
+
+	buf := make([]byte, size)
+	addr := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
+
+	err = windows.GetAdaptersAddresses(
+		windows.AF_UNSPEC,
+		windows.GAA_FLAG_INCLUDE_PREFIX,
+		0,
+		addr,
+		&size,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var list []*windows.IpAdapterAddresses
+	for a := addr; a != nil; a = a.Next {
+		list = append(list, a)
+	}
+	return list, nil
+}
+
+func classifySpeed(bps uint64) string {
+	switch {
+	case bps >= 40_000_000_000:
+		return "40GbE"
+	case bps >= 25_000_000_000:
+		return "25GbE"
+	case bps >= 10_000_000_000:
+		return "10GbE"
+	case bps >= 2_500_000_000:
+		return "2.5GbE"
+	case bps >= 1_000_000_000:
+		return "GbE"
+	case bps >= 100_000_000:
+		return "Fast Ethernet (FE)"
+	case bps >= 10_000_000:
+		return "Ethernet (E)"
+	default:
+		return "Unknown"
+	}
 }
 
 type LLDPInfo struct {
@@ -263,7 +331,7 @@ func parseLLDPFromTxt(path string) {
 	// Use a map to deduplicate results
 	seenPackets := make(map[string]bool)
 
-	fmt.Printf("%-20s | %-10s | %-6s | %-15s | %s\n", "System Name", "Port", "VLAN", "Chassis ID", "Description")
+	fmt.Printf("%-30s | %-10s | %-6s | %-15s | %s\n", "System Name", "Port", "VLAN", "Chassis ID", "Description")
 	fmt.Println(strings.Repeat("-", 90))
 
 	for scanner.Scan() {
@@ -319,7 +387,7 @@ func displayLLDP(rawHex string, seen map[string]bool) {
 		desc = desc[:27] + "..."
 	}
 
-	fmt.Printf("%-20s | %-10s | %-6s | %-15s | %s\n",
+	fmt.Printf("%-30s | %-10s | %-6s | %-15s | %s\n",
 		info.SystemName, info.PortDescription, vlanStr, info.ChassisID, desc)
 }
 
