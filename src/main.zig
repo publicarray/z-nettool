@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const dhcp = @import("dhcp.zig");
+const term_colour = @import("term_colour.zig");
+const network_tests = @import("network_tests.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -102,30 +104,46 @@ pub fn main() !void {
         }
     }
 
-    const tests = @import("network_tests.zig");
     try out.print("Connectivity Tests\n", .{});
 
-    if (try tests.pingMs(alloc, "8.8.8.8")) |ms|
-        try out.print("  Ping 8.8.8.8:   {d:.1} ms\n", .{ms})
-    else
-        try out.print("  Ping 8.8.8.8:   [failed]\n", .{});
+    const warn_ping_ms: f64 = 80.0;
+    const fail_ping_ms: f64 = 250.0;
 
-    if (try tests.pingMs(alloc, "1.1.1.1")) |ms|
-        try out.print("  Ping 1.1.1.1:   {d:.1} ms\n", .{ms})
-    else
-        try out.print("  Ping 1.1.1.1:   [failed]\n", .{});
-
-    if (try tests.dnsLookupA(alloc, "google.com")) |ipstr| {
-        defer alloc.free(ipstr);
-        try out.print("  DNS Lookup:     google.com {s}\n", .{ipstr});
+    // Ping 8.8.8.8
+    try out.print("  Ping 8.8.8.8:   ", .{});
+    if (try network_tests.pingMs(alloc, "8.8.8.8")) |ms| {
+        const s: term_colour.Status = if (ms >= fail_ping_ms) .fail else if (ms >= warn_ping_ms) .warn else .ok;
+        try term_colour.printValue(out, s, "{d:.1} ms\n", .{ms});
     } else {
-        try out.print("  DNS Lookup:     [failed]\n", .{});
+        try term_colour.printValue(out, .fail, "[failed]\n", .{});
     }
 
-    if (try tests.httpsStatus(alloc, "https://www.google.com")) |code|
-        try out.print("  HTTPS Test:     {d}\n", .{code})
-    else
-        try out.print("  HTTPS Test:     [failed]\n", .{});
+    // Ping 1.1.1.1
+    try out.print("  Ping 1.1.1.1:   ", .{});
+    if (try network_tests.pingMs(alloc, "1.1.1.1")) |ms| {
+        const s: term_colour.Status = if (ms >= fail_ping_ms) .fail else if (ms >= warn_ping_ms) .warn else .ok;
+        try term_colour.printValue(out, s, "{d:.1} ms\n", .{ms});
+    } else {
+        try term_colour.printValue(out, .fail, "[failed]\n", .{});
+    }
+
+    // DNS
+    try out.print("  DNS Lookup:     ", .{});
+    if (try network_tests.dnsLookupA(alloc, "google.com")) |ipstr| {
+        defer alloc.free(ipstr);
+        try term_colour.printValue(out, .ok, "google.com {s}\n", .{ipstr});
+    } else {
+        try term_colour.printValue(out, .fail, "[failed]\n", .{});
+    }
+
+    // HTTPS
+    try out.print("  HTTPS Test:     ", .{});
+    if (try network_tests.httpsStatus(alloc, "https://www.google.com")) |code| {
+        const s: term_colour.Status = if (code >= 200 and code < 400) .ok else .fail;
+        try term_colour.printValue(out, s, "{d}\n", .{code});
+    } else {
+        try term_colour.printValue(out, .fail, "[failed]\n", .{});
+    }
 
     try out.print("\nDHCP Lease / Server Detection\n", .{});
     try out.flush();
