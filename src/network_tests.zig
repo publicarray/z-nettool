@@ -61,44 +61,14 @@ pub fn dnsLookupA(alloc: std.mem.Allocator, name: []const u8) !?[]u8 {
 }
 
 pub fn httpsStatus(alloc: std.mem.Allocator, url: []const u8) !?u16 {
-    if (builtin.os.tag == .windows) {
-        // PowerShell: return status code
-        // (Invoke-WebRequest throws on some TLS failures; we treat that as null)
-        const ps = try std.fmt.allocPrint(
-            alloc,
-            "try {{ (Invoke-WebRequest -UseBasicParsing -Uri '{s}' -TimeoutSec 5).StatusCode }} catch {{ '' }}",
-            .{url},
-        );
-        defer alloc.free(ps);
+    var client: std.http.Client = .{ .allocator = alloc };
+    defer client.deinit();
 
-        var child = std.process.Child.init(&.{ "powershell", "-NoProfile", "-Command", ps }, alloc);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
+    const result = std.http.Client.fetch(&client, .{
+        .location = .{ .url = url },
+        .method = .GET,
+        .keep_alive = false,
+    }) catch return null;
 
-        try child.spawn();
-        const out_bytes = try child.stdout.?.readToEndAlloc(alloc, 16 * 1024);
-        defer alloc.free(out_bytes);
-        _ = try child.wait();
-
-        const s = std.mem.trim(u8, out_bytes, " \t\r\n");
-        if (s.len == 0) return null;
-        return std.fmt.parseInt(u16, s, 10) catch null;
-    } else {
-        // curl: print only HTTP code
-        // -sS silent, -o discard body, -m max time, -w output code
-        var child = std.process.Child.init(&.{ "curl", "-sS", "-o", "/dev/null", "-m", "5", "-w", "%{http_code}", url }, alloc);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-
-        try child.spawn();
-        const out_bytes = try child.stdout.?.readToEndAlloc(alloc, 16 * 1024);
-        defer alloc.free(out_bytes);
-        _ = try child.wait();
-
-        const s = std.mem.trim(u8, out_bytes, " \t\r\n");
-        if (s.len == 0) return null;
-        const code = std.fmt.parseInt(u16, s, 10) catch return null;
-        if (code == 0) return null;
-        return code;
-    }
+    return @as(u16, @intFromEnum(result.status));
 }

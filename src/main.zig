@@ -233,10 +233,6 @@ fn printLinuxPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
         try out.print("Warning: ping not found (install iputils).\n", .{});
         any = true;
     }
-    if (!hasExecutableInPath(alloc, "curl")) {
-        try out.print("Warning: curl not found (install curl).\n", .{});
-        any = true;
-    }
     if (!hasAnyFile(&.{
         "/usr/lib/libpcap.so",
         "/usr/lib64/libpcap.so",
