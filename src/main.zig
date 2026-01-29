@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const dhcp = @import("dhcp.zig");
 const term_colour = @import("term_colour.zig");
 const network_tests = @import("network_tests.zig");
+const lldp_common = @import("lldp_common.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -48,7 +49,7 @@ pub fn main() !void {
             alloc.free(ni.link);
         }
         try out.print("IP:         {s}\n", .{ni.ip_cidr});
-        try out.print("Link:       {s}\n", .{ni.link});
+        try out.print("Link:       {s}\n\n", .{ni.link});
     } else if (builtin.os.tag == .linux) {
         const ni = @import("netinfo_linux.zig");
         var info = try ni.getNetInfo(alloc, iface.name);
@@ -64,7 +65,7 @@ pub fn main() !void {
 
     if (builtin.os.tag == .windows) {
         try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
-        const neigh = @import("lldp_windows.zig").collectAndParse(alloc, lldpPacketCaptureTimeout) catch |e| {
+        const neigh = @import("lldp_windows.zig").collectAndParseCommon(alloc, lldpPacketCaptureTimeout) catch |e| {
             try out.print("  LLDP: capture failed ({s}). Are you running as Admin?\n", .{@errorName(e)});
             try out.flush();
             return;
@@ -74,35 +75,19 @@ pub fn main() !void {
             alloc.free(neigh);
         }
 
-        if (neigh.len == 0) {
-            try out.print("  No LLDP neighbors detected.\n", .{});
-        } else {
-            // Simple output (you can table-format later)
-            for (neigh) |n| {
-                try out.print("  System: {s}\n", .{n.system_name});
-                try out.print("  Port:   {s}\n", .{n.port_desc});
-                if (n.vlan) |v| try out.print("  VLAN:   {d}\n", .{v});
-                try out.print("  Chassis:{s}\n\n", .{n.chassis_id});
-            }
-        }
+        try printLldpReport(out, neigh);
     } else if (builtin.os.tag == .linux) {
         try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
         const allocator = std.heap.page_allocator;
         const lldp = @import("lldp_linux.zig");
 
-        var info = try lldp.parseLLDP(allocator, iface.name);
-        defer info.deinit(allocator);
-
-        try out.print("  System: {s}\n", .{info.sys_name orelse "(none)"});
-        try out.print("  PortID: {s}\n", .{info.port_id orelse "(none)"});
-        try out.print("  PortDescr: {s}\n", .{info.port_descr orelse "(none)"});
-
-        if (info.vlans.items.len == 0) {
-            try out.print("  VLANs: (none)\n", .{});
-        } else {
-            try out.print("  VLANs:\n", .{});
-            for (info.vlans.items) |v| try out.print("  - {s}\n", .{v});
+        const neigh = try lldp.collectAndParseCommon(allocator, iface.name);
+        defer {
+            for (neigh) |*n| n.deinit(allocator);
+            allocator.free(neigh);
         }
+
+        try printLldpReport(out, neigh);
     }
 
     try out.print("Connectivity Tests\n", .{});
@@ -156,6 +141,22 @@ pub fn main() !void {
 
     try out.flush();
     try waitForEnterOnWindowsIfNotTty();
+}
+
+fn printLldpReport(out: anytype, neigh: []lldp_common.Neighbor) !void {
+    if (neigh.len == 0) {
+        try out.print("  No LLDP neighbors detected.\n", .{});
+        return;
+    }
+
+    for (neigh) |n| {
+        try out.print("  System:      {s}\n", .{n.system_name});
+        try out.print("  SystemDescr: {s}\n", .{n.system_desc});
+        try out.print("  PortID:      {s}\n", .{n.port_id});
+        try out.print("  PortDescr:   {s}\n", .{n.port_desc});
+        try out.print("  VLANs:       {s}\n", .{n.vlans_csv});
+        try out.print("  Chassis:     {s}\n\n", .{n.chassis_id});
+    }
 }
 
 fn parseIfaceArg(args: []const [:0]u8) ?[]const u8 {

@@ -1,15 +1,20 @@
 const std = @import("std");
+const common = @import("lldp_common.zig");
 
 pub const LldpError = error{LldpctlFailed} || std.mem.Allocator.Error;
 
 pub const LldpInfo = struct {
+    chassis_id: ?[]u8 = null,
     sys_name: ?[]u8 = null,
+    sys_desc: ?[]u8 = null,
     port_id: ?[]u8 = null,
     port_descr: ?[]u8 = null,
     vlans: std.ArrayListUnmanaged([]u8) = .{},
 
     pub fn deinit(self: *LldpInfo, allocator: std.mem.Allocator) void {
+        if (self.chassis_id) |s| allocator.free(s);
         if (self.sys_name) |s| allocator.free(s);
+        if (self.sys_desc) |s| allocator.free(s);
         if (self.port_id) |s| allocator.free(s);
         if (self.port_descr) |s| allocator.free(s);
 
@@ -49,6 +54,16 @@ pub fn parseLLDP(allocator: std.mem.Allocator, iface: []const u8) LldpError!Lldp
             info.sys_name = try allocator.dupe(u8, val);
             continue;
         }
+        if (parseValueAfterPrefix(line, "SysDescr:")) |val| {
+            if (info.sys_desc) |old| allocator.free(old);
+            info.sys_desc = try allocator.dupe(u8, val);
+            continue;
+        }
+        if (parseValueAfterPrefix(line, "ChassisID:")) |val| {
+            if (info.chassis_id) |old| allocator.free(old);
+            info.chassis_id = try allocator.dupe(u8, val);
+            continue;
+        }
         if (parseValueAfterPrefix(line, "PortID:")) |val| {
             if (info.port_id) |old| allocator.free(old);
             info.port_id = try allocator.dupe(u8, val);
@@ -67,6 +82,53 @@ pub fn parseLLDP(allocator: std.mem.Allocator, iface: []const u8) LldpError!Lldp
     }
 
     return info;
+}
+
+pub fn collectAndParseCommon(allocator: std.mem.Allocator, iface: []const u8) LldpError![]common.Neighbor {
+    var info = try parseLLDP(allocator, iface);
+    errdefer info.deinit(allocator);
+
+    const name = try allocator.dupe(u8, info.sys_name orelse "(none)");
+    errdefer allocator.free(name);
+    const desc = try allocator.dupe(u8, info.sys_desc orelse "(none)");
+    errdefer allocator.free(desc);
+    const port_id = try allocator.dupe(u8, info.port_id orelse "(none)");
+    errdefer allocator.free(port_id);
+    const port_desc = try allocator.dupe(u8, info.port_descr orelse "(none)");
+    errdefer allocator.free(port_desc);
+    const chassis = try allocator.dupe(u8, info.chassis_id orelse "(none)");
+    errdefer allocator.free(chassis);
+
+    var vlans_csv: []u8 = undefined;
+    if (info.vlans.items.len == 0) {
+        vlans_csv = try allocator.dupe(u8, "(none)");
+    } else {
+        var buf = try std.ArrayList(u8).initCapacity(allocator, 32);
+        errdefer buf.deinit(allocator);
+        for (info.vlans.items, 0..) |v, i| {
+            if (i != 0) try buf.appendSlice(allocator, ", ");
+            try buf.appendSlice(allocator, v);
+        }
+        vlans_csv = try buf.toOwnedSlice(allocator);
+    }
+
+    var out = try std.ArrayList(common.Neighbor).initCapacity(allocator, 1);
+    errdefer {
+        for (out.items) |*n| n.deinit(allocator);
+        out.deinit(allocator);
+    }
+
+    try out.append(allocator, .{
+        .chassis_id = chassis,
+        .port_id = port_id,
+        .system_name = name,
+        .system_desc = desc,
+        .port_desc = port_desc,
+        .vlans_csv = vlans_csv,
+    });
+
+    info.deinit(allocator);
+    return try out.toOwnedSlice(allocator);
 }
 
 fn parseValueAfterPrefix(line: []const u8, prefix: []const u8) ?[]const u8 {

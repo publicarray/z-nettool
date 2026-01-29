@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("lldp_common.zig");
 
 pub const Neighbor = struct {
     chassis_id: []u8,
@@ -53,6 +54,38 @@ pub fn collectAndParse(alloc: std.mem.Allocator, listen_seconds: u32) ![]Neighbo
     _ = std.fs.cwd().deleteFile(PktmonFile) catch {};
     _ = std.fs.cwd().deleteFile(PktmonTxt) catch {};
     return data;
+}
+
+pub fn collectAndParseCommon(alloc: std.mem.Allocator, listen_seconds: u32) ![]common.Neighbor {
+    const neigh = try collectAndParse(alloc, listen_seconds);
+    defer {
+        for (neigh) |*n| n.deinit(alloc);
+        alloc.free(neigh);
+    }
+
+    var out = try std.ArrayList(common.Neighbor).initCapacity(alloc, neigh.len);
+    errdefer {
+        for (out.items) |*n| n.deinit(alloc);
+        out.deinit(alloc);
+    }
+
+    for (neigh) |n| {
+        const vlans_csv = if (n.vlan) |v|
+            try std.fmt.allocPrint(alloc, "{d}", .{v})
+        else
+            try alloc.dupe(u8, "(none)");
+
+        try out.append(alloc, .{
+            .chassis_id = try alloc.dupe(u8, n.chassis_id),
+            .port_id = try alloc.dupe(u8, n.port_id),
+            .system_name = try alloc.dupe(u8, n.system_name),
+            .system_desc = try alloc.dupe(u8, n.sys_desc),
+            .port_desc = try alloc.dupe(u8, n.port_desc),
+            .vlans_csv = vlans_csv,
+        });
+    }
+
+    return try out.toOwnedSlice(alloc);
 }
 
 fn printCountdown(listen_seconds: u32) !void {
@@ -286,23 +319,51 @@ fn decodeIdValue(alloc: std.mem.Allocator, v: []const u8) ![]u8 {
     const subtype = v[0];
     const value = v[1..];
 
-    return switch (subtype) {
-        // 4 = MAC address
-        4 => if (value.len == 6)
-            try std.fmt.allocPrint(alloc, "{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}", .{
-                value[0], value[1], value[2], value[3], value[4], value[5],
-            })
-        else
-            try alloc.dupe(u8, value),
+    if ((subtype == 3 or subtype == 4) and value.len == 6) {
+        return try std.fmt.allocPrint(alloc, "{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}", .{
+            value[0], value[1], value[2], value[3], value[4], value[5],
+        });
+    }
 
-        // 5 = Network address (often IPv4/IPv6; keep raw for now)
-        5 => try alloc.dupe(u8, value),
+    if ((subtype == 4 or subtype == 5) and value.len >= 5 and value[0] == 1) {
+        const ip = value[1..5];
+        return try std.fmt.allocPrint(alloc, "{d}.{d}.{d}.{d}", .{ ip[0], ip[1], ip[2], ip[3] });
+    }
 
-        // 7 = Locally assigned
-        7 => try alloc.dupe(u8, value),
+    if ((subtype == 4 or subtype == 5) and value.len >= 17 and value[0] == 2) {
+        const ip6 = value[1..17];
+        return try std.fmt.allocPrint(
+            alloc,
+            "{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}",
+            .{
+                ip6[0], ip6[1], ip6[2],  ip6[3],  ip6[4],  ip6[5],  ip6[6],  ip6[7],
+                ip6[8], ip6[9], ip6[10], ip6[11], ip6[12], ip6[13], ip6[14], ip6[15],
+            },
+        );
+    }
 
-        else => try alloc.dupe(u8, value),
-    };
+    if (subtype == 1 or subtype == 2 or subtype == 5 or subtype == 6 or subtype == 7) {
+        var printable = true;
+        for (value) |c| {
+            if (!std.ascii.isPrint(c)) {
+                printable = false;
+                break;
+            }
+        }
+        if (printable) return try alloc.dupe(u8, value);
+
+        var buf = try std.ArrayList(u8).initCapacity(alloc, value.len * 3);
+        errdefer buf.deinit(alloc);
+        for (value, 0..) |c, i| {
+            if (i != 0) try buf.append(alloc, ':');
+            var tmp: [2]u8 = undefined;
+            _ = std.fmt.bufPrint(&tmp, "{X:0>2}", .{c}) catch {};
+            try buf.appendSlice(alloc, &tmp);
+        }
+        return try buf.toOwnedSlice(alloc);
+    }
+
+    return try alloc.dupe(u8, value);
 }
 
 // -------- UTF-16LE decode for pktmon output --------
