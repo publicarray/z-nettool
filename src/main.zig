@@ -214,7 +214,8 @@ fn hasExecutableInPath(alloc: std.mem.Allocator, name: []const u8) bool {
     const path_env = std.process.getEnvVarOwned(alloc, "PATH") catch return false;
     defer alloc.free(path_env);
 
-    var it = std.mem.splitScalar(u8, path_env, ':');
+    const delim = std.fs.path.delimiter;
+    var it = std.mem.splitScalar(u8, path_env, delim);
     while (it.next()) |dir| {
         if (dir.len == 0) continue;
         const full = std.fs.path.join(alloc, &.{ dir, name }) catch continue;
