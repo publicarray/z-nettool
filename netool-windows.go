@@ -107,7 +107,6 @@ func printInterfaceInfo(ifaceName string) {
 	}
 
 	addrs, _ := iface.Addrs()
-
 	ipv4 := "[not assigned]"
 	ipv6 := "[not assigned]"
 
@@ -141,12 +140,30 @@ func printInterfaceInfo(ifaceName string) {
 
 	link := getLinkSpeed(ifaceName)
 
+	ipv4Color := color.New(color.FgGreen)
+	ipv6Color := color.New(color.FgGreen)
+	if ipv4 == "[not assigned]" {
+		ipv4Color = color.New(color.FgRed)
+	}
+	if ipv6 == "[not assigned]" {
+		ipv6Color = color.New(color.Reset)
+	}
+
+	speedColor := color.New(color.FgWhite)
+	if link > "GbE" {
+		speedColor = color.New(color.FgBlue)
+	} else if link <= "Fast Ethernet (FE)" {
+		speedColor = color.New(color.FgYellow)
+	} else if link >= "GbE" {
+		speedColor = color.New(color.FgGreen)
+	}
+
 	fmt.Println("\nInterface:")
-	fmt.Println("  Name:", ifaceName)
-	fmt.Println("  MAC: ", iface.HardwareAddr)
-	fmt.Println("  IPv4:", ipv4)
-	fmt.Println("  IPv6:", ipv6)
-	fmt.Println("  Link:", link)
+	fmt.Printf("  Name: %s\n", ifaceName)
+	fmt.Printf("  MAC:  %s\n", iface.HardwareAddr)
+	fmt.Printf("  IPv4: %s\n", ipv4Color.Sprint(ipv4))
+	fmt.Printf("  IPv6: %s\n", ipv6Color.Sprint(ipv6))
+	fmt.Printf("  Link: %s\n", speedColor.Sprint(link))
 }
 
 func getLinkSpeed(ifaceName string) string {
@@ -489,14 +506,14 @@ func printConnectivity() {
 	ping := func(host string) string {
 		out, err := exec.Command("ping", "-n", "1", host).Output()
 		if err != nil {
-			return "[fail]"
+			return color.New(color.FgRed).Sprint("[fail]")
 		}
 		for _, l := range strings.Split(string(out), "\n") {
 			if strings.Contains(l, "time=") {
-				return strings.Split(strings.Split(l, "time=")[1], "ms")[0] + " ms"
+				return color.New(color.FgGreen).Sprint(strings.Split(strings.Split(l, "time=")[1], "ms")[0] + " ms")
 			}
 		}
-		return "[fail]"
+		return color.New(color.FgRed).Sprint("[fail]")
 	}
 
 	fmt.Println("  Ping 8.8.8.8:", ping("8.8.8.8"))
@@ -513,9 +530,9 @@ func printConnectivity() {
 	client := &http.Client{Timeout: 5 * time.Second, Transport: tr}
 	resp, err := client.Get("https://google.com")
 	if err != nil {
-		fmt.Println("  HTTPS: [fail]")
+		fmt.Println("  HTTPS:", color.New(color.FgRed).Sprint("[fail]"))
 	} else {
-		fmt.Println("  HTTPS:", resp.Status)
+		fmt.Println("  HTTPS:", color.New(color.FgGreen).Sprint(resp.Status))
 		resp.Body.Close()
 	}
 }
@@ -544,6 +561,7 @@ func printDHCP(ifaceName string) {
 
 	if len(servers) == 0 {
 		fmt.Println("  [!] No DHCP offers detected")
+		// fmt.Println(color.New(color.FgRed).Sprint("  [!] No DHCP offers detected"))
 		return
 	}
 
@@ -552,7 +570,7 @@ func printDHCP(ifaceName string) {
 	}
 
 	for _, s := range servers {
-		fmt.Println("\n  Server:", s.ServerIP)
+		fmt.Printf("\n  Server: %s\n", color.New(color.FgGreen).Sprint(s.ServerIP))
 		fmt.Println("    Offers:", s.Offers)
 		for _, ip := range s.Offered {
 			fmt.Println("    Offered IP:", ip)

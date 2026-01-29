@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,8 +82,16 @@ func getLinkInfo(iface string) string {
 		}
 	}
 	if speed != "" && duplex != "" {
-		return fmt.Sprintf("%s %s", speed, duplex)
+		num, _ := strconv.ParseInt(speed, 10, 64)
+		if num > 1000 {
+			return fmt.Sprintf(color.New(color.FgBlue).Sprint(speed), duplex)
+		} else if strings.Contains(speed, "1000") {
+			return fmt.Sprintf(color.New(color.FgGreen).Sprint(speed), duplex)
+		} else {
+			return fmt.Sprintf(color.New(color.FgYellow).Sprint(speed+" (Slow Link)"), duplex)
+		}
 	}
+
 	return "[unknown]"
 }
 
