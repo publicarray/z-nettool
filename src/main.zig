@@ -44,10 +44,14 @@ pub fn main() !void {
     try out.print("MAC:        {s}\n", .{fmtMac(&iface.mac)});
 
     if (builtin.os.tag == .windows) {
+        try printWindowsPrereqWarnings(out, alloc);
+
         var info = try @import("netinfo_windows.zig").getNetInfoCommon(alloc, iface.name);
         defer info.deinit(alloc);
         try printNetInfo(out, info);
     } else if (builtin.os.tag == .linux) {
+        try printLinuxPrereqWarnings(out, alloc);
+
         var info = try @import("netinfo_linux.zig").getNetInfoCommon(alloc, iface.name);
         defer info.deinit(alloc);
         try printNetInfo(out, info);
@@ -172,6 +176,68 @@ fn printNetInfo(out: anytype, info: netinfo_common.NetInfo) !void {
         info.link_speed,
         info.link_duplex,
     });
+}
+
+fn printLinuxPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
+    var any = false;
+
+    if (!hasExecutableInPath(alloc, "lldpctl")) {
+        try out.print("Warning: lldpctl not found (install lldpd/lldpctl).\n", .{});
+        any = true;
+    }
+    if (!hasExecutableInPath(alloc, "ip")) {
+        try out.print("Warning: ip not found (install iproute2).\n", .{});
+        any = true;
+    }
+    if (!hasExecutableInPath(alloc, "ping")) {
+        try out.print("Warning: ping not found (install iputils).\n", .{});
+        any = true;
+    }
+    if (!hasExecutableInPath(alloc, "curl")) {
+        try out.print("Warning: curl not found (install curl).\n", .{});
+        any = true;
+    }
+    if (!hasAnyFile(&.{
+        "/usr/lib/libpcap.so",
+        "/usr/lib64/libpcap.so",
+        "/usr/lib/x86_64-linux-gnu/libpcap.so",
+    })) {
+        try out.print("Warning: libpcap not found (install libpcap).\n", .{});
+        any = true;
+    }
+
+    if (any) try out.print("\n", .{});
+}
+
+fn hasExecutableInPath(alloc: std.mem.Allocator, name: []const u8) bool {
+    const path_env = std.process.getEnvVarOwned(alloc, "PATH") catch return false;
+    defer alloc.free(path_env);
+
+    var it = std.mem.splitScalar(u8, path_env, ':');
+    while (it.next()) |dir| {
+        if (dir.len == 0) continue;
+        const full = std.fs.path.join(alloc, &.{ dir, name }) catch continue;
+        defer alloc.free(full);
+        const f = std.fs.openFileAbsolute(full, .{}) catch continue;
+        f.close();
+        return true;
+    }
+    return false;
+}
+
+fn hasAnyFile(paths: []const []const u8) bool {
+    for (paths) |p| {
+        const f = std.fs.openFileAbsolute(p, .{}) catch continue;
+        f.close();
+        return true;
+    }
+    return false;
+}
+
+fn printWindowsPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
+    if (!hasExecutableInPath(alloc, "pktmon.exe")) {
+        try out.print("Warning: pktmon.exe not found (LLDP capture will fail).\n\n", .{});
+    }
 }
 
 fn parseIfaceArg(args: []const [:0]u8) ?[]const u8 {
