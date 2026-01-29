@@ -46,6 +46,7 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v6
         with:
+          name: netool
           path: zig-out/bin/*
           if-no-files-found: warn
           
