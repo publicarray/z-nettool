@@ -2,45 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
-    // platform args
-    const argv = if (builtin.os.tag == .windows)
-        &.{ "ping", "-n", "1", "-w", "2000", host }
-    else
-        &.{ "ping", "-c", "1", "-W", "2", host };
-
-    var child = std.process.Child.init(argv, alloc);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-    try child.spawn();
-    const out_bytes = try child.stdout.?.readToEndAlloc(alloc, 64 * 1024);
-    defer alloc.free(out_bytes);
-    _ = try child.wait();
-
-    if (builtin.os.tag == .windows) {
-        // Look for "Average = 44ms"
-        if (std.mem.indexOf(u8, out_bytes, "Average =")) |idx| {
-            const tail = out_bytes[idx + "Average =".len ..];
-            // parse number until 'm'
-            var j: usize = 0;
-            while (j < tail.len and (tail[j] == ' ')) : (j += 1) {}
-            var k = j;
-            while (k < tail.len and std.ascii.isDigit(tail[k])) : (k += 1) {}
-            if (k > j) {
-                const v = std.fmt.parseInt(u32, tail[j..k], 10) catch return null;
-                return @as(f64, @floatFromInt(v));
-            }
-        }
-        return null;
-    } else {
-        // Look for "time=44.0 ms"
-        if (std.mem.indexOf(u8, out_bytes, "time=")) |idx| {
-            const tail = out_bytes[idx + "time=".len ..];
-            var k: usize = 0;
-            while (k < tail.len and (std.ascii.isDigit(tail[k]) or tail[k] == '.')) : (k += 1) {}
-            if (k > 0) return std.fmt.parseFloat(f64, tail[0..k]) catch null;
-        }
-        return null;
-    }
+    return @import("ping.zig").pingMs(alloc, host);
 }
 
 pub fn dnsLookupA(alloc: std.mem.Allocator, name: []const u8) !?[]u8 {

@@ -229,16 +229,16 @@ fn printLinuxPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
         try out.print("Warning: ip not found (install iproute2).\n", .{});
         any = true;
     }
-    if (!hasExecutableInPath(alloc, "ping")) {
-        try out.print("Warning: ping not found (install iputils).\n", .{});
-        any = true;
-    }
     if (!hasAnyFile(&.{
         "/usr/lib/libpcap.so",
         "/usr/lib64/libpcap.so",
         "/usr/lib/x86_64-linux-gnu/libpcap.so",
     })) {
         try out.print("Warning: libpcap not found (install libpcap).\n", .{});
+        any = true;
+    }
+    if (std.posix.geteuid() != 0) {
+        try out.print("Warning: ICMP ping requires CAP_NET_RAW or root; ping tests may fail.\n", .{});
         any = true;
     }
 
