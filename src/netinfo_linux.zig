@@ -1,8 +1,14 @@
 const std = @import("std");
 const common = @import("netinfo_common.zig");
+const c = @cImport({
+    @cInclude("ifaddrs.h");
+    @cInclude("net/if.h");
+    @cInclude("arpa/inet.h");
+    @cInclude("netinet/in.h");
+});
 
 pub fn getNetInfoCommon(alloc: std.mem.Allocator, iface: []const u8) !common.NetInfo {
-    const ip = try ipAddrsFromIpJson(alloc, iface);
+    const ip = try ipAddrsFromIfAddrs(alloc, iface);
     var ip4 = ip.ip4;
     var ip6 = ip.ip6;
     if (ip4.len == 0) {
@@ -30,58 +36,52 @@ const IpAddrs = struct {
     ip6: []u8,
 };
 
-fn ipAddrsFromIpJson(alloc: std.mem.Allocator, iface: []const u8) !IpAddrs {
-    // ip -j addr show dev <iface>
-    var child = std.process.Child.init(&.{ "ip", "-j", "addr", "show", "dev", iface }, alloc);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-
-    try child.spawn();
-    const out_bytes = try child.stdout.?.readToEndAlloc(alloc, 64 * 1024);
-    defer alloc.free(out_bytes);
-    const term = try child.wait();
-    switch (term) {
-        .Exited => |code| if (code != 0) return .{ .ip4 = try alloc.dupe(u8, ""), .ip6 = try alloc.dupe(u8, "") },
-        else => return .{ .ip4 = try alloc.dupe(u8, ""), .ip6 = try alloc.dupe(u8, "") },
+fn ipAddrsFromIfAddrs(alloc: std.mem.Allocator, iface: []const u8) !IpAddrs {
+    var ifap: ?*c.ifaddrs = null;
+    if (c.getifaddrs(&ifap) != 0) {
+        return .{ .ip4 = try alloc.dupe(u8, ""), .ip6 = try alloc.dupe(u8, "") };
     }
-
-    // Parse JSON: [ { "addr_info": [ { "family":"inet", "local":"10.0.0.107", "prefixlen":24 }, ... ] } ]
-    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, out_bytes, .{});
-    defer parsed.deinit();
-
-    const root = parsed.value;
-    if (root != .array or root.array.items.len == 0)
-        return .{ .ip4 = try alloc.dupe(u8, ""), .ip6 = try alloc.dupe(u8, "") };
-
-    const obj = root.array.items[0];
-    if (obj != .object)
-        return .{ .ip4 = try alloc.dupe(u8, ""), .ip6 = try alloc.dupe(u8, "") };
-
-    const addr_info_v = obj.object.get("addr_info") orelse
-        return .{ .ip4 = try alloc.dupe(u8, ""), .ip6 = try alloc.dupe(u8, "") };
-    if (addr_info_v != .array)
-        return .{ .ip4 = try alloc.dupe(u8, ""), .ip6 = try alloc.dupe(u8, "") };
+    defer c.freeifaddrs(ifap);
 
     var ip4: ?[]u8 = null;
     var ip6: ?[]u8 = null;
-    for (addr_info_v.array.items) |ai| {
-        if (ai != .object) continue;
 
-        const fam_v = ai.object.get("family") orelse continue;
-        if (fam_v != .string) continue;
+    var cur = ifap;
+    while (cur) |ifa| : (cur = ifa.ifa_next) {
+        if (ifa.ifa_addr == null) continue;
+        if (ifa.ifa_name == null) continue;
 
-        const local_v = ai.object.get("local") orelse continue;
-        const pre_v = ai.object.get("prefixlen") orelse continue;
-        if (local_v != .string or pre_v != .integer) continue;
+        const name = std.mem.span(@as([*:0]const u8, @ptrCast(ifa.ifa_name)));
+        if (!std.mem.eql(u8, name, iface)) continue;
 
-        if (std.mem.eql(u8, fam_v.string, "inet")) {
-            if (ip4 == null)
-                ip4 = try std.fmt.allocPrint(alloc, "{s}/{d}", .{ local_v.string, pre_v.integer });
-        } else if (std.mem.eql(u8, fam_v.string, "inet6")) {
-            if (ip6 == null) {
-                if (std.ascii.startsWithIgnoreCase(local_v.string, "fe80:")) continue;
-                ip6 = try std.fmt.allocPrint(alloc, "{s}/{d}", .{ local_v.string, pre_v.integer });
-            }
+        const family = ifa.ifa_addr.*.sa_family;
+        if (family == c.AF_INET) {
+            if (ip4 != null) continue;
+            const sa = @as(*const c.sockaddr_in, @ptrCast(@alignCast(ifa.ifa_addr)));
+            const mask = ifa.ifa_netmask orelse continue;
+            const mask4 = @as(*const c.sockaddr_in, @ptrCast(@alignCast(mask)));
+
+            var buf: [c.INET_ADDRSTRLEN]u8 = undefined;
+            const ip_ptr = c.inet_ntop(c.AF_INET, &sa.sin_addr, &buf, buf.len) orelse continue;
+            const ip_str = std.mem.span(@as([*:0]const u8, @ptrCast(ip_ptr)));
+
+            const prefix = prefixLenFromMask4(mask4);
+            ip4 = try std.fmt.allocPrint(alloc, "{s}/{d}", .{ ip_str, prefix });
+        } else if (family == c.AF_INET6) {
+            if (ip6 != null) continue;
+            const sa6 = @as(*const c.sockaddr_in6, @ptrCast(@alignCast(ifa.ifa_addr)));
+            const mask = ifa.ifa_netmask orelse continue;
+            const mask6 = @as(*const c.sockaddr_in6, @ptrCast(@alignCast(mask)));
+
+            const b = sa6.sin6_addr.s6_addr;
+            if (b[0] == 0xfe and (b[1] & 0xc0) == 0x80) continue; // skip link-local
+
+            var buf: [c.INET6_ADDRSTRLEN]u8 = undefined;
+            const ip_ptr = c.inet_ntop(c.AF_INET6, &sa6.sin6_addr, &buf, buf.len) orelse continue;
+            const ip_str = std.mem.span(@as([*:0]const u8, @ptrCast(ip_ptr)));
+
+            const prefix = prefixLenFromMask6(mask6);
+            ip6 = try std.fmt.allocPrint(alloc, "{s}/{d}", .{ ip_str, prefix });
         }
     }
 
@@ -89,6 +89,17 @@ fn ipAddrsFromIpJson(alloc: std.mem.Allocator, iface: []const u8) !IpAddrs {
         .ip4 = ip4 orelse try alloc.dupe(u8, ""),
         .ip6 = ip6 orelse try alloc.dupe(u8, ""),
     };
+}
+
+fn prefixLenFromMask4(mask: *const c.sockaddr_in) u8 {
+    const m: u32 = @bitCast(mask.sin_addr.s_addr);
+    return @intCast(@popCount(m));
+}
+
+fn prefixLenFromMask6(mask: *const c.sockaddr_in6) u8 {
+    var count: u32 = 0;
+    for (mask.sin6_addr.s6_addr) |b| count += @popCount(b);
+    return @intCast(count);
 }
 
 fn readSysfsTrim(alloc: std.mem.Allocator, path: []const u8) ![]u8 {

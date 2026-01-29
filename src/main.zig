@@ -225,10 +225,6 @@ fn printLinuxPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
         try out.print("Warning: lldpctl not found (install lldpd/lldpctl).\n", .{});
         any = true;
     }
-    if (!hasExecutableInPath(alloc, "ip")) {
-        try out.print("Warning: ip not found (install iproute2).\n", .{});
-        any = true;
-    }
     if (!hasAnyFile(&.{
         "/usr/lib/libpcap.so",
         "/usr/lib64/libpcap.so",
