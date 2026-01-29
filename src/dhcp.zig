@@ -32,6 +32,17 @@ pub fn discoverAndListen(
     std.crypto.random.bytes(&xid_buf);
     const xid = std.mem.readInt(u32, &xid_buf, .big);
 
+    if (builtin.os.tag == .linux) {
+        try sendDiscoverEphemeral(alloc, iface_name, xid, mac);
+        try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
+        try out.print("  Listening for {d}s...\n", .{listen_seconds});
+        try out.flush();
+
+        const pcap = @import("dhcp_pcap_linux.zig");
+        try pcap.sniffOffersLinux(iface_name, xid, listen_seconds);
+        return;
+    }
+
     std.posix.bind(sock, &listen_addr.any, listen_addr.getOsSockLen()) catch |e| {
         if (e == error.AddressInUse and builtin.os.tag == .linux) {
             // send DISCOVER from an ephemeral socket (don’t bind 68), then sniff via pcap
