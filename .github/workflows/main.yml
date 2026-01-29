@@ -46,7 +46,7 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v6
         with:
-          name: netool
+          name: netool-${{ matrix.os }}
           path: zig-out/bin/*
           if-no-files-found: warn
           
