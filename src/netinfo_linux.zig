@@ -73,8 +73,9 @@ fn ipAddrsFromIfAddrs(alloc: std.mem.Allocator, iface: []const u8) !IpAddrs {
             const mask = ifa.ifa_netmask orelse continue;
             const mask6 = @as(*const c.sockaddr_in6, @ptrCast(@alignCast(mask)));
 
-            const b = sa6.sin6_addr.s6_addr;
-            if (b[0] == 0xfe and (b[1] & 0xc0) == 0x80) continue; // skip link-local
+            // Avoid relying on platform-specific struct_in6_addr fields.
+            const b = std.mem.asBytes(&sa6.sin6_addr);
+            if (b.len >= 2 and b[0] == 0xfe and (b[1] & 0xc0) == 0x80) continue; // skip link-local
 
             var buf: [c.INET6_ADDRSTRLEN]u8 = undefined;
             const ip_ptr = c.inet_ntop(c.AF_INET6, &sa6.sin6_addr, &buf, buf.len) orelse continue;
@@ -98,7 +99,8 @@ fn prefixLenFromMask4(mask: *const c.sockaddr_in) u8 {
 
 fn prefixLenFromMask6(mask: *const c.sockaddr_in6) u8 {
     var count: u32 = 0;
-    for (mask.sin6_addr.s6_addr) |b| count += @popCount(b);
+    // Avoid relying on platform-specific struct_in6_addr fields.
+    for (std.mem.asBytes(&mask.sin6_addr)) |b| count += @popCount(b);
     return @intCast(count);
 }
 

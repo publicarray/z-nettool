@@ -7,7 +7,7 @@ pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
     const sock = std.posix.socket(std.posix.AF.INET, std.posix.SOCK.RAW, std.posix.IPPROTO.ICMP) catch return null;
     defer std.posix.close(sock);
 
-    const id: u16 = @truncate(@as(u32, @intCast(std.posix.getpid())));
+    const id: u16 = @truncate(@as(u32, @intCast(std.os.linux.getpid())));
     const seq: u16 = 1;
 
     var payload: [32]u8 = undefined;
@@ -32,7 +32,10 @@ pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
         const now = std.time.nanoTimestamp();
         const elapsed = now - start_ns;
         if (elapsed >= timeout_ns) return null;
-        const remaining_ms: i32 = @intCast((timeout_ns - elapsed + std.time.ns_per_ms - 1) / std.time.ns_per_ms);
+        const remaining_ms: i32 = @intCast(@divTrunc(
+            timeout_ns - elapsed + std.time.ns_per_ms - 1,
+            std.time.ns_per_ms,
+        ));
 
         var pfd = [_]std.posix.pollfd{.{ .fd = sock, .events = std.posix.POLL.IN, .revents = 0 }};
         const rc = std.posix.poll(&pfd, remaining_ms) catch return null;
