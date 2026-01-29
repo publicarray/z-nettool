@@ -65,7 +65,15 @@ pub fn sniffOffersLinux(
         return error.PcapSetFilterFailed;
     }
 
+    if (c.pcap_setnonblock(handle, 1, &errbuf) != 0) {
+        try out.print("  [!] pcap_setnonblock failed: {s}\n", .{std.mem.sliceTo(&errbuf, 0)});
+        try out.flush();
+    }
+
     const linktype = c.pcap_datalink(handle);
+
+    // Small delay to ensure capture is fully active before sending.
+    std.Thread.sleep(50 * std.time.ns_per_ms);
 
     send_discover(send_ctx) catch |e| {
         try out.print("  [!] send DISCOVER failed: {s}\n", .{@errorName(e)});
