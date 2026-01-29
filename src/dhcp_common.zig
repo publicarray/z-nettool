@@ -52,6 +52,28 @@ pub const labels_udp = OfferLabels{
     .dns = "DNS",
 };
 
+pub fn buildDiscover(alloc: std.mem.Allocator, xid: u32, mac: [6]u8) ![]u8 {
+    var p = try std.ArrayList(u8).initCapacity(alloc, 300);
+    errdefer p.deinit(alloc);
+
+    var h: [236]u8 = [_]u8{0} ** 236;
+    h[0] = 1; // BOOTREQUEST
+    h[1] = 1; // Ethernet
+    h[2] = 6; // hlen
+    std.mem.writeInt(u32, h[4..8], xid, .big);
+    std.mem.writeInt(u16, h[10..12], 0x8000, .big); // broadcast flag
+    @memcpy(h[28..34], &mac); // chaddr
+
+    try p.appendSlice(alloc, &h);
+    try p.appendSlice(alloc, magic_cookie[0..]);
+
+    try p.appendSlice(alloc, &.{ Opt.msg_type, 1, Msg.discover });
+    try p.appendSlice(alloc, &.{ Opt.param_req, 5, 1, 3, 6, 51, 54 });
+    try p.append(alloc, Opt.end);
+
+    return try p.toOwnedSlice(alloc);
+}
+
 fn maxLabelLen(labels: OfferLabels) usize {
     var max_len: usize = labels.ip.len;
     if (labels.server.len > max_len) max_len = labels.server.len;

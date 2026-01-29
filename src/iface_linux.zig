@@ -1,5 +1,5 @@
 const std = @import("std");
-const Interface = @import("main.zig").Interface;
+const Interface = @import("iface_common.zig").Interface;
 
 pub fn chooseInterface(alloc: std.mem.Allocator, forced: ?[]const u8) !Interface {
     if (forced) |name| {

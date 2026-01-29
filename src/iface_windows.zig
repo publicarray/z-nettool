@@ -1,13 +1,12 @@
 const std = @import("std");
 const w = std.os.windows;
 
-const Interface = @import("main.zig").Interface;
+const Interface = @import("iface_common.zig").Interface;
 
 // ---------------- Win32 imports ----------------
 
 extern "kernel32" fn LoadLibraryW(lpLibFileName: [*:0]const u16) callconv(.winapi) ?w.HMODULE;
 extern "kernel32" fn GetProcAddress(hModule: w.HMODULE, lpProcName: [*:0]const u8) callconv(.winapi) ?*anyopaque;
-
 
 // ---------------- Constants ----------------
 
@@ -68,23 +67,17 @@ const GetAdaptersInfoFn = *const fn (
 // ---------------- Helpers ----------------
 
 fn loadGetAdaptersAddresses() !GetAdaptersAddressesFn {
-    const mod = LoadLibraryW(&[_:0]u16{ 'i','p','h','l','p','a','p','i','.','d','l','l' })
-        orelse return error.DllLoadFailed;
+    const mod = LoadLibraryW(&[_:0]u16{ 'i', 'p', 'h', 'l', 'p', 'a', 'p', 'i', '.', 'd', 'l', 'l' }) orelse return error.DllLoadFailed;
 
-    const sym = GetProcAddress(mod, &[_:0]u8{
-        'G','e','t','A','d','a','p','t','e','r','s','A','d','d','r','e','s','s','e','s'
-    }) orelse return error.SymbolNotFound;
+    const sym = GetProcAddress(mod, &[_:0]u8{ 'G', 'e', 't', 'A', 'd', 'a', 'p', 't', 'e', 'r', 's', 'A', 'd', 'd', 'r', 'e', 's', 's', 'e', 's' }) orelse return error.SymbolNotFound;
 
     return @ptrCast(sym);
 }
 
 fn loadGetAdaptersInfo() !GetAdaptersInfoFn {
-    const mod = LoadLibraryW(&[_:0]u16{ 'i','p','h','l','p','a','p','i','.','d','l','l' })
-        orelse return error.DllLoadFailed;
+    const mod = LoadLibraryW(&[_:0]u16{ 'i', 'p', 'h', 'l', 'p', 'a', 'p', 'i', '.', 'd', 'l', 'l' }) orelse return error.DllLoadFailed;
 
-    const sym = GetProcAddress(mod, &[_:0]u8{
-        'G','e','t','A','d','a','p','t','e','r','s','I','n','f','o'
-    }) orelse return error.SymbolNotFound;
+    const sym = GetProcAddress(mod, &[_:0]u8{ 'G', 'e', 't', 'A', 'd', 'a', 'p', 't', 'e', 'r', 's', 'I', 'n', 'f', 'o' }) orelse return error.SymbolNotFound;
 
     return @ptrCast(sym);
 }
@@ -112,7 +105,7 @@ fn utf16leZToUtf8Alloc(alloc: std.mem.Allocator, wstr_z: [*:0]const u16) ![]u8 {
         if (cp == null) break;
         var tmp: [4]u8 = undefined;
         const len = std.unicode.utf8Encode(cp.?, &tmp) catch break;
-        @memcpy(out[i..i+len], tmp[0..len]);
+        @memcpy(out[i .. i + len], tmp[0..len]);
         i += len;
     }
 
@@ -155,8 +148,7 @@ pub fn chooseInterface(alloc: std.mem.Allocator, forced: ?[]const u8) !Interface
 }
 
 fn getAdapters(alloc: std.mem.Allocator) ![]Adapter {
-    return getAdaptersViaAddresses(alloc)
-        catch getAdaptersViaAdaptersInfo(alloc);
+    return getAdaptersViaAddresses(alloc) catch getAdaptersViaAdaptersInfo(alloc);
 }
 
 fn getAdaptersViaAddresses(alloc: std.mem.Allocator) ![]Adapter {

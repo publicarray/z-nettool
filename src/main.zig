@@ -2,6 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const dhcp = @import("dhcp.zig");
+const iface = @import("iface.zig");
+const lldp = @import("lldp.zig");
+const netinfo = @import("netinfo.zig");
 const term_colour = @import("term_colour.zig");
 const network_tests = @import("network_tests.zig");
 const lldp_common = @import("lldp_common.zig");
@@ -29,31 +32,30 @@ pub fn main() !void {
     const forced_iface = parseIfaceArg(args);
     const force_dhcp_udp = hasFlag(args, "--dhcp-udp");
 
-    var iface = if (builtin.os.tag == .windows)
-        try (@import("iface_windows.zig").chooseInterface(alloc, forced_iface))
-    else if (builtin.os.tag == .linux)
-        try (@import("iface_linux.zig").chooseInterface(alloc, forced_iface))
-    else {
-        try err.print("Unsupported OS.\n", .{});
-        try err.flush();
-        return;
+    var selected_iface = iface.chooseInterface(alloc, forced_iface) catch |e| {
+        if (e == error.UnsupportedOS) {
+            try err.print("Unsupported OS.\n", .{});
+            try err.flush();
+            return;
+        }
+        return e;
     };
 
-    defer iface.deinit(alloc);
+    defer selected_iface.deinit(alloc);
 
-    try out.print("Interface:  {s}\n", .{iface.name});
-    try out.print("MAC:        {s}\n", .{fmtMac(&iface.mac)});
+    try out.print("Interface:  {s}\n", .{selected_iface.name});
+    try out.print("MAC:        {s}\n", .{fmtMac(&selected_iface.mac)});
 
     if (builtin.os.tag == .windows) {
         try printWindowsPrereqWarnings(out, alloc);
 
-        var info = try @import("netinfo_windows.zig").getNetInfoCommon(alloc, iface.name);
+        var info = try netinfo.getNetInfoCommon(alloc, selected_iface.name);
         defer info.deinit(alloc);
         try printNetInfo(out, info);
     } else if (builtin.os.tag == .linux) {
         try printLinuxPrereqWarnings(out, alloc);
 
-        var info = try @import("netinfo_linux.zig").getNetInfoCommon(alloc, iface.name);
+        var info = try netinfo.getNetInfoCommon(alloc, selected_iface.name);
         defer info.deinit(alloc);
         try printNetInfo(out, info);
     } else {
@@ -64,7 +66,7 @@ pub fn main() !void {
 
     if (builtin.os.tag == .windows) {
         try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
-        const neigh = @import("lldp_windows.zig").collectAndParseCommon(alloc, lldpPacketCaptureTimeout) catch |e| {
+        const neigh = lldp.collectAndParseCommon(alloc, selected_iface.name, lldpPacketCaptureTimeout) catch |e| {
             try out.print("  LLDP: capture failed ({s}). Are you running as Admin?\n", .{@errorName(e)});
             try out.flush();
             return;
@@ -77,11 +79,8 @@ pub fn main() !void {
         try printLldpReport(out, neigh);
     } else if (builtin.os.tag == .linux) {
         try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
-        const allocator = std.heap.page_allocator;
-        const lldp = @import("lldp_linux.zig");
-
-        const neigh = lldp.collectAndParseCommon(allocator, iface.name) catch |e| {
-            if (e == lldp.LldpError.LldpctlFailed) {
+        const neigh = lldp.collectAndParseCommon(alloc, selected_iface.name, lldpPacketCaptureTimeout) catch |e| {
+            if (e == error.LldpctlFailed) {
                 try out.print("  LLDP: lldpctl failed. Is lldpd running?\n", .{});
                 try out.print("  Hint: sudo systemctl start lldpd\n", .{});
                 try out.flush();
@@ -90,8 +89,8 @@ pub fn main() !void {
             return e;
         };
         defer {
-            for (neigh) |*n| n.deinit(allocator);
-            allocator.free(neigh);
+            for (neigh) |*n| n.deinit(alloc);
+            alloc.free(neigh);
         }
 
         try printLldpReport(out, neigh);
@@ -144,7 +143,7 @@ pub fn main() !void {
     try out.print("DHCP: sending DISCOVER and listening for OFFER...\n", .{});
     try out.flush();
 
-    try dhcp.discoverAndListen(alloc, iface.name, iface.mac, dhcpListenTimeout, force_dhcp_udp);
+    try dhcp.discoverAndListen(alloc, selected_iface.name, selected_iface.mac, dhcpListenTimeout, force_dhcp_udp);
 
     try out.flush();
     try waitForEnterOnWindowsIfNotTty();
@@ -298,16 +297,6 @@ fn fmtMac(mac: *const [6]u8) [17:0]u8 {
     }) catch {};
     return buf;
 }
-
-pub const Interface = struct {
-    name: []u8, // owned
-    mac: [6]u8,
-
-    pub fn deinit(self: *Interface, alloc: std.mem.Allocator) void {
-        alloc.free(self.name);
-        self.* = undefined;
-    }
-};
 
 fn waitForEnterOnWindowsIfNotTty() !void {
     if (builtin.os.tag != .windows) return;
