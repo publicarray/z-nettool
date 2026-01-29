@@ -59,8 +59,6 @@ pub fn main() !void {
         defer info.deinit(alloc);
         try printNetInfo(out, info);
     } else if (builtin.os.tag == .macos) {
-        try printDarwinPrereqWarnings(out, alloc);
-
         var info = try netinfo.getNetInfoCommon(alloc, selected_iface.name);
         defer info.deinit(alloc);
         try printNetInfo(out, info);
@@ -257,17 +255,6 @@ fn printLinuxPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
     }
     if (std.posix.geteuid() != 0) {
         try out.print("Warning: ICMP ping requires CAP_NET_RAW or root; ping tests may fail.\n", .{});
-        any = true;
-    }
-
-    if (any) try out.print("\n", .{});
-}
-
-fn printDarwinPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
-    var any = false;
-
-    if (!hasExecutableInPath(alloc, "lldpctl")) {
-        try out.print("Warning: lldpctl not found (install lldpd).\n", .{});
         any = true;
     }
 
