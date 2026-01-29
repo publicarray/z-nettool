@@ -75,7 +75,15 @@ pub fn main() !void {
         const allocator = std.heap.page_allocator;
         const lldp = @import("lldp_linux.zig");
 
-        const neigh = try lldp.collectAndParseCommon(allocator, iface.name);
+        const neigh = lldp.collectAndParseCommon(allocator, iface.name) catch |e| {
+            if (e == lldp.LldpError.LldpctlFailed) {
+                try out.print("  LLDP: lldpctl failed. Is lldpd running?\n", .{});
+                try out.print("  Hint: sudo systemctl start lldpd\n", .{});
+                try out.flush();
+                return;
+            }
+            return e;
+        };
         defer {
             for (neigh) |*n| n.deinit(allocator);
             allocator.free(neigh);

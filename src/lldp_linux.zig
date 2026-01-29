@@ -41,7 +41,9 @@ pub fn parseLLDP(allocator: std.mem.Allocator, iface: []const u8) LldpError!Lldp
 
     const term = child.wait() catch return LldpError.LldpctlFailed;
     switch (term) {
-        .Exited => |code| if (code != 0) return LldpError.LldpctlFailed,
+        .Exited => |code| {
+            if (code != 0 and out.len == 0) return info;
+        },
         else => return LldpError.LldpctlFailed,
     }
 
