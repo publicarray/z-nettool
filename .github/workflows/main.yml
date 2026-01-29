@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -42,7 +42,19 @@ jobs:
           
       - name: Build
         run: zig build -Doptimize=ReleaseFast
-
+        
+      - name: Rename binary
+        shell: bash
+        run: |
+          BIN_DIR=zig-out/bin
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            mv $BIN_DIR/netool.exe $BIN_DIR/netool-windows.exe
+          elif [[ "$RUNNER_OS" == "Linux" ]]; then
+            mv $BIN_DIR/netool $BIN_DIR/netool-linux
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            mv $BIN_DIR/netool $BIN_DIR/netool-macos
+          fi
+          
       - name: Upload binary
         uses: actions/upload-artifact@v6
         with:
