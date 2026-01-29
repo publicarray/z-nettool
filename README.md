@@ -80,3 +80,4 @@ make build
 - Go 1.19+
 - Zig 0.15.2
 - Linux: libpcap
+- Linux: lldpctl

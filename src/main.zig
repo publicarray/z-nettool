@@ -66,6 +66,7 @@ pub fn main() !void {
         try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
         const neigh = @import("lldp_windows.zig").collectAndParse(alloc, lldpPacketCaptureTimeout) catch |e| {
             try out.print("  LLDP: capture failed ({s}). Are you running as Admin?\n", .{@errorName(e)});
+            try out.flush();
             return;
         };
         defer {
@@ -186,9 +187,6 @@ pub const Interface = struct {
 
 fn waitForEnterOnWindowsIfNotTty() !void {
     if (builtin.os.tag != .windows) return;
-
-    // If running in a real terminal, don't pause.
-    // if (std.posix.isatty(std.fs.File.stdout().handle)) return;
 
     var out_buf: [512]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);

@@ -25,7 +25,11 @@ fn ipCidrFromIpJson(alloc: std.mem.Allocator, iface: []const u8) ![]u8 {
     try child.spawn();
     const out_bytes = try child.stdout.?.readToEndAlloc(alloc, 64 * 1024);
     defer alloc.free(out_bytes);
-    _ = try child.wait();
+    const term = try child.wait();
+    switch (term) {
+        .Exited => |code| if (code != 0) return try alloc.dupe(u8, ""),
+        else => return try alloc.dupe(u8, ""),
+    }
 
     // Parse JSON: [ { "addr_info": [ { "family":"inet", "local":"10.0.0.107", "prefixlen":24 }, ... ] } ]
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, out_bytes, .{});

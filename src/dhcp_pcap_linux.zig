@@ -31,8 +31,11 @@ pub fn sniffOffersLinux(
     var out_writer = std.fs.File.stdout().writer(&out_buf);
     const out = &out_writer.interface;
 
+    const iface_z = try std.mem.dupeZ(std.heap.page_allocator, u8, iface);
+    defer std.heap.page_allocator.free(iface_z);
+
     var errbuf: [c.PCAP_ERRBUF_SIZE]u8 = undefined;
-    const handle = c.pcap_open_live(iface.ptr, 1600, 1, 250, &errbuf);
+    const handle = c.pcap_open_live(iface_z.ptr, 1600, 1, 250, &errbuf);
     if (handle == null) {
         try out.print("  [!] pcap_open_live failed: {s}\n", .{std.mem.sliceTo(&errbuf, 0)});
         try out.flush();

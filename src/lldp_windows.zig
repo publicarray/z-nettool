@@ -26,14 +26,18 @@ pub fn collectAndParse(alloc: std.mem.Allocator, listen_seconds: u32) ![]Neighbo
     _ = std.fs.cwd().deleteFile(PktmonFile) catch {};
     _ = std.fs.cwd().deleteFile(PktmonTxt) catch {};
 
+    errdefer {
+        _ = std.fs.cwd().deleteFile(PktmonFile) catch {};
+        _ = std.fs.cwd().deleteFile(PktmonTxt) catch {};
+    }
+
     // Start capture (LLDP ethertype)
     // NOTE: requires Admin (your manifest already forces this)
     try run(alloc, &.{
-        "pktmon", "start",
-        "--capture",
-        "--pkt-size", "1600",
-        "--etw",
-        "-f", "ethernet.type==0x88cc",
+        "pktmon",      "start",
+        "--capture",   "--pkt-size",
+        "1600",        "--etw",
+        "-f",          "ethernet.type==0x88cc",
         "--file-name", PktmonFile,
     });
 
@@ -42,10 +46,10 @@ pub fn collectAndParse(alloc: std.mem.Allocator, listen_seconds: u32) ![]Neighbo
 
     // Stop + convert to text with hex
     _ = run(alloc, &.{ "pktmon", "stop" }) catch {};
-    _ = run(alloc, &.{ "pktmon", "etl2txt", PktmonFile, "--hex", "--out", PktmonTxt }) catch {};
+    try run(alloc, &.{ "pktmon", "etl2txt", PktmonFile, "--hex", "--out", PktmonTxt });
 
     // Parse & Cleanup
-   const data = try parsePktmonTxt(alloc, PktmonTxt);
+    const data = try parsePktmonTxt(alloc, PktmonTxt);
     _ = std.fs.cwd().deleteFile(PktmonFile) catch {};
     _ = std.fs.cwd().deleteFile(PktmonTxt) catch {};
     return data;
