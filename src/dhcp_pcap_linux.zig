@@ -14,6 +14,8 @@ pub const Offer = struct {
     xid_match: bool = true,
 };
 
+pub const SendDiscoverFn = *const fn (ctx: *anyopaque) anyerror!void;
+
 fn rd16be(b: []const u8) u16 {
     // caller guarantees b.len >= 2
     const p: *const [2]u8 = @ptrCast(b.ptr);
@@ -28,6 +30,8 @@ pub fn sniffOffersLinux(
     iface: []const u8,
     xid_expected: u32,
     seconds: u32,
+    send_ctx: *anyopaque,
+    send_discover: SendDiscoverFn,
 ) !void {
     var out_buf: [4096]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);
@@ -61,6 +65,13 @@ pub fn sniffOffersLinux(
         return error.PcapSetFilterFailed;
     }
 
+    const linktype = c.pcap_datalink(handle);
+
+    send_discover(send_ctx) catch |e| {
+        try out.print("  [!] send DISCOVER failed: {s}\n", .{@errorName(e)});
+        try out.flush();
+    };
+
     // sniff loop
     var start = try std.time.Timer.start();
     while (start.read() < @as(u64, seconds) * std.time.ns_per_s) {
@@ -74,7 +85,7 @@ pub fn sniffOffersLinux(
         const hdr = hdr_ptr.?;
         const pkt = data_ptr[0..@intCast(hdr.caplen)];
 
-        if (tryParseDhcpOffer(pkt, xid_expected)) |offer| {
+        if (tryParseDhcpOfferLink(pkt, linktype, xid_expected)) |offer| {
             try out.print("\n  DHCP OFFER:\n", .{});
             try out.print("    IP Offered:  {s}\n", .{offer.your_ip});
             if (offer.server_id.len != 0) try out.print("    Server:      {s}\n", .{offer.server_id});
@@ -92,7 +103,16 @@ pub fn sniffOffersLinux(
     }
 }
 
-fn tryParseDhcpOffer(frame: []const u8, xid_expected: u32) ?Offer {
+fn tryParseDhcpOfferLink(frame: []const u8, linktype: c_int, xid_expected: u32) ?Offer {
+    if (linktype == c.DLT_EN10MB) return tryParseDhcpOfferEther(frame, xid_expected);
+    if (linktype == c.DLT_LINUX_SLL) return tryParseDhcpOfferSll(frame, xid_expected, false);
+    if (@hasDecl(c, "DLT_LINUX_SLL2")) {
+        if (linktype == c.DLT_LINUX_SLL2) return tryParseDhcpOfferSll(frame, xid_expected, true);
+    }
+    return null;
+}
+
+fn tryParseDhcpOfferEther(frame: []const u8, xid_expected: u32) ?Offer {
     // Ethernet header (14) + optional VLAN tags
     if (frame.len < 14) return null;
 
@@ -103,32 +123,64 @@ fn tryParseDhcpOffer(frame: []const u8, xid_expected: u32) ?Offer {
     // VLAN tags 0x8100 / 0x88a8
     while (ethertype == 0x8100 or ethertype == 0x88a8) {
         if (frame.len < off + 4) return null;
-        ethertype = rd16be(frame[off .. off + 2]);
+        ethertype = rd16be(frame[off + 2 .. off + 4]);
         off += 4;
     }
 
-    if (ethertype != 0x0800) return null; // IPv4
-    if (frame.len < off + 20) return null;
+    return parseOfferFromProto(ethertype, frame[off..], xid_expected);
+}
 
-    const ver_ihl = frame[off];
+fn tryParseDhcpOfferSll(frame: []const u8, xid_expected: u32, sll2: bool) ?Offer {
+    if (!sll2) {
+        // Linux cooked v1 header: 16 bytes, protocol at offset 14
+        if (frame.len < 16) return null;
+        const proto = rd16be(frame[14..16]);
+        return parseOfferFromProto(proto, frame[16..], xid_expected);
+    }
+
+    // Linux cooked v2 header: 20 bytes, protocol at offset 0
+    if (frame.len < 20) return null;
+    const proto = rd16be(frame[0..2]);
+    return parseOfferFromProto(proto, frame[20..], xid_expected);
+}
+
+fn parseOfferFromProto(proto: u16, payload: []const u8, xid_expected: u32) ?Offer {
+    var ethertype = proto;
+    var p = payload;
+
+    // VLAN tags 0x8100 / 0x88a8
+    while (ethertype == 0x8100 or ethertype == 0x88a8) {
+        if (p.len < 4) return null;
+        ethertype = rd16be(p[2..4]);
+        p = p[4..];
+    }
+
+    if (ethertype != 0x0800) return null; // IPv4
+    return parseOfferFromIp(p, xid_expected);
+}
+
+fn parseOfferFromIp(pkt: []const u8, xid_expected: u32) ?Offer {
+    if (pkt.len < 20) return null;
+
+    const ver_ihl = pkt[0];
     if ((ver_ihl >> 4) != 4) return null;
     const ihl = @as(usize, (ver_ihl & 0x0f)) * 4;
-    if (frame.len < off + ihl + 8) return null;
+    if (pkt.len < ihl + 8) return null;
 
-    const proto = frame[off + 9];
+    const proto = pkt[9];
     if (proto != 17) return null; // UDP
 
-    off += ihl;
+    var off: usize = ihl;
 
-    const src_port = rd16be(frame[off .. off + 2]);
-    const dst_port = rd16be(frame[off + 2 .. off + 4]);
+    const src_port = rd16be(pkt[off .. off + 2]);
+    const dst_port = rd16be(pkt[off + 2 .. off + 4]);
     if (!((src_port == 67 or src_port == 68) and (dst_port == 67 or dst_port == 68))) return null;
 
     off += 8; // UDP header
 
     // DHCP/BOOTP payload starts here
-    if (frame.len < off + 240) return null; // bootp(236)+cookie(4)
-    const dhcp = frame[off..];
+    if (pkt.len < off + 240) return null; // bootp(236)+cookie(4)
+    const dhcp = pkt[off..];
 
     return parseOfferFromBootp(dhcp, xid_expected);
 }

@@ -11,6 +11,30 @@ pub fn discoverAndListen(
     var out_writer = std.fs.File.stdout().writer(&out_buf);
     const out = &out_writer.interface;
 
+    var xid_buf: [4]u8 = undefined;
+    std.crypto.random.bytes(&xid_buf);
+    const xid = std.mem.readInt(u32, &xid_buf, .big);
+
+    if (builtin.os.tag == .linux) {
+        // Prefer pcap on Linux so we can see all offers (even if another DHCP client owns port 68).
+        var send_ctx = SendCtx{
+            .alloc = alloc,
+            .iface_name = iface_name,
+            .xid = xid,
+            .mac = mac,
+        };
+        try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
+        try out.print("  Listening for {d}s...\n", .{listen_seconds});
+        try out.flush();
+
+        const pcap = @import("dhcp_pcap_linux.zig");
+        if (pcap.sniffOffersLinux(iface_name, xid, listen_seconds, &send_ctx, sendDiscoverCb)) |_| return else |e| {
+            // Fall back to UDP if pcap isn't available (permissions, missing libpcap, etc.)
+            try out.print("  [!] pcap sniff failed ({s}); falling back to UDP\n", .{@errorName(e)});
+            try out.flush();
+        }
+    }
+
     const listen_addr = try std.net.Address.parseIp4("0.0.0.0", 68);
     const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, 0);
     defer std.posix.close(sock);
@@ -28,28 +52,10 @@ pub fn discoverAndListen(
         &std.mem.toBytes(@as(c_int, 1)),
     );
 
-    var xid_buf: [4]u8 = undefined;
-    std.crypto.random.bytes(&xid_buf);
-    const xid = std.mem.readInt(u32, &xid_buf, .big);
-
-    if (builtin.os.tag == .linux) {
-        try sendDiscoverEphemeral(alloc, iface_name, xid, mac);
-        try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
-        try out.print("  Listening for {d}s...\n", .{listen_seconds});
-        try out.flush();
-
-        const pcap = @import("dhcp_pcap_linux.zig");
-        try pcap.sniffOffersLinux(iface_name, xid, listen_seconds);
-        return;
-    }
-
     std.posix.bind(sock, &listen_addr.any, listen_addr.getOsSockLen()) catch |e| {
         if (e == error.AddressInUse and builtin.os.tag == .linux) {
-            // send DISCOVER from an ephemeral socket (don’t bind 68), then sniff via pcap
-            try sendDiscoverEphemeral(alloc, iface_name, xid, mac);
-            const pcap = @import("dhcp_pcap_linux.zig");
-            try pcap.sniffOffersLinux(iface_name, xid, listen_seconds);
-            return;
+            try out.print("  [!] port 68 in use and pcap unavailable.\n", .{});
+            try out.flush();
         }
         return e;
     };
@@ -60,9 +66,11 @@ pub fn discoverAndListen(
     const bcast = try std.net.Address.parseIp4("255.255.255.255", 67);
     _ = try std.posix.sendto(sock, pkt, 0, &bcast.any, bcast.getOsSockLen());
 
-    try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
-    try out.print("  Listening for {d}s...\n", .{listen_seconds});
-    try out.flush();
+    if (builtin.os.tag != .linux) {
+        try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
+        try out.print("  Listening for {d}s...\n", .{listen_seconds});
+        try out.flush();
+    }
 
     var timer = try std.time.Timer.start();
     var buf: [2048]u8 = undefined;
@@ -86,9 +94,24 @@ pub fn discoverAndListen(
             if (offer.router.len != 0) try out.print("    Router:    {s}\n", .{offer.router});
             if (offer.dns.len != 0) try out.print("    DNS:       {s}\n", .{offer.dns});
             if (offer.lease.len != 0) try out.print("    Lease:     {s}\n", .{offer.lease});
+            if (!offer.xid_match) {
+                try out.print("    XID:       0x{x} (expected 0x{x})\n", .{ offer.xid, xid });
+            }
             try out.flush();
         }
     }
+}
+
+const SendCtx = struct {
+    alloc: std.mem.Allocator,
+    iface_name: []const u8,
+    xid: u32,
+    mac: [6]u8,
+};
+
+fn sendDiscoverCb(ctx: *anyopaque) !void {
+    const c: *SendCtx = @ptrCast(@alignCast(ctx));
+    try sendDiscoverEphemeral(c.alloc, c.iface_name, c.xid, c.mac);
 }
 
 fn sendDiscoverEphemeral(alloc: std.mem.Allocator, iface_name: []const u8, xid: u32, mac: [6]u8) !void {
@@ -143,6 +166,8 @@ const Offer = struct {
     router: [16]u8 = [_]u8{0} ** 16,
     dns: [64]u8 = [_]u8{0} ** 64,
     lease: [32]u8 = [_]u8{0} ** 32,
+    xid: u32 = 0,
+    xid_match: bool = true,
 };
 
 fn parseOffer(pkt: []const u8, xid_expected: u32) ?Offer {
@@ -150,12 +175,11 @@ fn parseOffer(pkt: []const u8, xid_expected: u32) ?Offer {
     if (pkt[0] != 2) return null;
 
     const xid = std.mem.readInt(u32, pkt[4..8], .big);
-    if (xid != xid_expected) return null;
 
     const yiaddr = pkt[16..20];
     if (!std.mem.eql(u8, pkt[236..240], &.{ 0x63, 0x82, 0x53, 0x63 })) return null;
 
-    var offer: Offer = .{};
+    var offer: Offer = .{ .xid = xid, .xid_match = (xid == xid_expected) };
     _ = std.fmt.bufPrint(&offer.your_ip, "{d}.{d}.{d}.{d}", .{ yiaddr[0], yiaddr[1], yiaddr[2], yiaddr[3] }) catch {};
 
     var i: usize = 240;
@@ -210,7 +234,8 @@ fn parseOffer(pkt: []const u8, xid_expected: u32) ?Offer {
         }
     }
 
-    if (msg_type != 2) return null;
+    // OFFER=2, ACK=5 (some servers may reply with ACK)
+    if (!(msg_type == 2 or msg_type == 5)) return null;
 
     if (lease_seconds != 0) {
         const hours: u32 = lease_seconds / 3600;
