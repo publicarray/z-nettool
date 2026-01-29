@@ -171,12 +171,51 @@ fn printNetInfo(out: anytype, info: netinfo_common.NetInfo) !void {
     if (info.ip6_cidr.len != 0) {
         try out.print("IPv6:       {s}\n", .{info.ip6_cidr});
     }
-    try out.print("Link:       {s} [{s} {s} {s}]\n\n", .{
-        info.link_state,
-        info.link_kind,
-        info.link_speed,
-        info.link_duplex,
-    });
+    try out.print("Link:       ", .{});
+    if (linkStateStatus(info.link_state)) |s| {
+        try term_colour.printValue(out, s, "{s}", .{info.link_state});
+    } else {
+        try out.print("{s}", .{info.link_state});
+    }
+    try out.print(" [{s} ", .{info.link_kind});
+    if (speedStatus(info.link_speed)) |s| {
+        try term_colour.printValue(out, s, "{s}", .{info.link_speed});
+    } else {
+        try out.print("{s}", .{info.link_speed});
+    }
+    try out.print(" {s}]\n\n", .{info.link_duplex});
+}
+
+fn linkStateStatus(state: []const u8) ?term_colour.Status {
+    const s = std.mem.trim(u8, state, " \t\r\n");
+    if (std.ascii.eqlIgnoreCase(s, "up")) return .ok;
+    if (std.ascii.eqlIgnoreCase(s, "down")) return .fail;
+    return .warn;
+}
+
+fn speedStatus(speed: []const u8) ?term_colour.Status {
+    const mbps = parseSpeedMbps(speed) orelse return null;
+    if (mbps < 1000.0) {
+        return .warn;
+    }
+    if (mbps < 2000.0) {
+        return .ok;
+    }
+    return .fast;
+}
+
+fn parseSpeedMbps(speed: []const u8) ?f64 {
+    const s = std.mem.trim(u8, speed, " \t\r\n");
+    if (std.ascii.endsWithIgnoreCase(s, "Mbps")) {
+        const num = std.mem.trim(u8, s[0 .. s.len - 4], " \t");
+        return std.fmt.parseFloat(f64, num) catch null;
+    }
+    if (std.ascii.endsWithIgnoreCase(s, "Gbps")) {
+        const num = std.mem.trim(u8, s[0 .. s.len - 4], " \t");
+        const gbps = std.fmt.parseFloat(f64, num) catch null;
+        return (gbps orelse return null) * 1000.0;
+    }
+    return null;
 }
 
 fn printLinuxPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
