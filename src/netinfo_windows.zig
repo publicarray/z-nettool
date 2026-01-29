@@ -1,4 +1,5 @@
 const std = @import("std");
+const common = @import("netinfo_common.zig");
 const w = std.os.windows;
 
 // kernel32 dynamic loader
@@ -10,6 +11,7 @@ const ERROR_BUFFER_OVERFLOW: u32 = 111;
 
 const AF_UNSPEC: u32 = 0;
 const AF_INET: u16 = 2;
+const AF_INET6: u16 = 23;
 
 const GAA_FLAG_SKIP_ANYCAST: u32 = 0x0002;
 const GAA_FLAG_SKIP_MULTICAST: u32 = 0x0004;
@@ -28,6 +30,18 @@ const SOCKADDR_IN = extern struct {
     sin_port: u16,
     sin_addr: u32, // network order
     sin_zero: [8]u8,
+};
+
+const IN6_ADDR = extern struct {
+    Byte: [16]u8,
+};
+
+const SOCKADDR_IN6 = extern struct {
+    sin6_family: u16,
+    sin6_port: u16,
+    sin6_flowinfo: u32,
+    sin6_addr: IN6_ADDR,
+    sin6_scope_id: u32,
 };
 
 const SOCKET_ADDRESS = extern struct {
@@ -125,6 +139,17 @@ fn ip4ToString(buf: *[32]u8, addr_be: u32, prefix: u8) ![]const u8 {
     return try std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}/{d}", .{ b0, b1, b2, b3, prefix });
 }
 
+fn ip6ToString(buf: *[64]u8, addr: [16]u8, prefix: u8) ![]const u8 {
+    return try std.fmt.bufPrint(
+        buf,
+        "{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}:{X:0>2}{X:0>2}/{d}",
+        .{
+            addr[0], addr[1], addr[2],  addr[3],  addr[4],  addr[5],  addr[6],  addr[7],
+            addr[8], addr[9], addr[10], addr[11], addr[12], addr[13], addr[14], addr[15],
+            prefix,
+        },
+    );
+}
 fn fmtBitsPerSec(buf: *[64]u8, bps: u64) ![]const u8 {
     // show Mbps/Gbps
     const mbps = @as(f64, @floatFromInt(bps)) / 1_000_000.0;
@@ -189,6 +214,96 @@ pub const NetInfo = struct {
     ip_cidr: []u8,
     link: []u8,
 };
+
+pub fn getNetInfoCommon(alloc: std.mem.Allocator, iface_name: []const u8) !common.NetInfo {
+    const gaa = try loadGetAdaptersAddresses();
+    const flags: u32 = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST;
+
+    var buf_len: u32 = 0;
+    const rc0 = gaa(AF_UNSPEC, flags, null, null, &buf_len);
+    if (rc0 != ERROR_BUFFER_OVERFLOW or buf_len == 0) return error.GetAdaptersFailed;
+
+    const buf = try alloc.alignedAlloc(u8, .@"8", buf_len);
+    errdefer alloc.free(buf);
+
+    const addrs: *IP_ADAPTER_ADDRESSES_LH = @ptrCast(@alignCast(buf.ptr));
+    const rc = gaa(AF_UNSPEC, flags, null, addrs, &buf_len);
+    if (rc != ERROR_SUCCESS) return error.GetAdaptersFailed;
+
+    var cur: ?*IP_ADAPTER_ADDRESSES_LH = addrs;
+    while (cur) |a| : (cur = a.Next) {
+        if (a.FriendlyName == null) continue;
+        if (!utf16zEqualsAsciiIgnoreCase(a.FriendlyName.?, iface_name)) continue;
+
+        // IP (IPv4/IPv6): first unicast we find for each family
+        var ip_buf: [32]u8 = undefined;
+        var ip_str: []const u8 = "";
+        var ip6_buf: [64]u8 = undefined;
+        var ip6_str: []const u8 = "";
+
+        const duplex_opt = getDuplex(alloc, iface_name) catch null;
+        defer if (duplex_opt) |d| alloc.free(d);
+
+        var u: ?*IP_ADAPTER_UNICAST_ADDRESS_LH = a.FirstUnicastAddress;
+        while (u) |ua| : (u = ua.Next) {
+            const sa = ua.Address.lpSockaddr orelse continue;
+            if (sa.sa_family == AF_INET and ip_str.len == 0) {
+                const sin: *const SOCKADDR_IN = @ptrCast(@alignCast(sa));
+                ip_str = try ip4ToString(&ip_buf, sin.sin_addr, ua.OnLinkPrefixLength);
+            } else if (sa.sa_family == AF_INET6 and ip6_str.len == 0) {
+                const sin6: *const SOCKADDR_IN6 = @ptrCast(@alignCast(sa));
+                const b0 = sin6.sin6_addr.Byte[0];
+                const b1 = sin6.sin6_addr.Byte[1];
+                const is_link_local = (b0 == 0xfe) and ((b1 & 0xc0) == 0x80);
+                if (!is_link_local) {
+                    ip6_str = try ip6ToString(&ip6_buf, sin6.sin6_addr.Byte, ua.OnLinkPrefixLength);
+                }
+            }
+
+            if (ip_str.len != 0 and ip6_str.len != 0) break;
+        }
+
+        // Link
+        const up = (a.OperStatus == 1);
+        const state = try alloc.dupe(u8, if (up) "up" else "down");
+        const duplex = if (duplex_opt) |d| try alloc.dupe(u8, d) else try alloc.dupe(u8, "unknown");
+
+        if (a.IfType == IfType_EthernetCSMA) {
+            var sp_buf: [64]u8 = undefined;
+            const speed = if (a.TransmitLinkSpeed > a.ReceiveLinkSpeed) a.TransmitLinkSpeed else a.ReceiveLinkSpeed;
+            const sp = if (speed > 0) try fmtBitsPerSec(&sp_buf, speed) else "unknown speed";
+
+            const kind = try alloc.dupe(u8, "ethernet");
+            const speed_s = try alloc.dupe(u8, sp);
+
+            alloc.free(buf);
+            return .{
+                .ip_cidr = try alloc.dupe(u8, if (ip_str.len != 0) ip_str else "[unknown]"),
+                .ip6_cidr = try alloc.dupe(u8, ip6_str),
+                .link_state = state,
+                .link_kind = kind,
+                .link_speed = speed_s,
+                .link_duplex = duplex,
+            };
+        } else {
+            const kind = try alloc.dupe(u8, "unknown");
+            const speed_s = try alloc.dupe(u8, "unknown speed");
+
+            alloc.free(buf);
+            return .{
+                .ip_cidr = try alloc.dupe(u8, if (ip_str.len != 0) ip_str else "[unknown]"),
+                .ip6_cidr = try alloc.dupe(u8, ip6_str),
+                .link_state = state,
+                .link_kind = kind,
+                .link_speed = speed_s,
+                .link_duplex = duplex,
+            };
+        }
+    }
+
+    alloc.free(buf);
+    return error.InterfaceNotFound;
+}
 
 pub fn getIpAndLink(alloc: std.mem.Allocator, iface_name: []const u8) !NetInfo {
     const gaa = try loadGetAdaptersAddresses();

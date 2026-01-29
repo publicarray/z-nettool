@@ -5,6 +5,7 @@ const dhcp = @import("dhcp.zig");
 const term_colour = @import("term_colour.zig");
 const network_tests = @import("network_tests.zig");
 const lldp_common = @import("lldp_common.zig");
+const netinfo_common = @import("netinfo_common.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -43,20 +44,13 @@ pub fn main() !void {
     try out.print("MAC:        {s}\n", .{fmtMac(&iface.mac)});
 
     if (builtin.os.tag == .windows) {
-        const ni = try @import("netinfo_windows.zig").getIpAndLink(alloc, iface.name);
-        defer {
-            alloc.free(ni.ip_cidr);
-            alloc.free(ni.link);
-        }
-        try out.print("IP:         {s}\n", .{ni.ip_cidr});
-        try out.print("Link:       {s}\n\n", .{ni.link});
-    } else if (builtin.os.tag == .linux) {
-        const ni = @import("netinfo_linux.zig");
-        var info = try ni.getNetInfo(alloc, iface.name);
+        var info = try @import("netinfo_windows.zig").getNetInfoCommon(alloc, iface.name);
         defer info.deinit(alloc);
-
-        try out.print("IP:         {s}\n", .{if (info.ip_cidr.len != 0) info.ip_cidr else "[unknown]"});
-        try out.print("Link:       {s}\n\n", .{info.link});
+        try printNetInfo(out, info);
+    } else if (builtin.os.tag == .linux) {
+        var info = try @import("netinfo_linux.zig").getNetInfoCommon(alloc, iface.name);
+        defer info.deinit(alloc);
+        try printNetInfo(out, info);
     } else {
         try out.print("IP:         [unknown]\n", .{});
         try out.print("Link:       [unknown]\n\n", .{});
@@ -157,6 +151,19 @@ fn printLldpReport(out: anytype, neigh: []lldp_common.Neighbor) !void {
         try out.print("  VLANs:       {s}\n", .{n.vlans_csv});
         try out.print("  Chassis:     {s}\n\n", .{n.chassis_id});
     }
+}
+
+fn printNetInfo(out: anytype, info: netinfo_common.NetInfo) !void {
+    try out.print("IP:         {s}\n", .{info.ip_cidr});
+    if (info.ip6_cidr.len != 0) {
+        try out.print("IPv6:       {s}\n", .{info.ip6_cidr});
+    }
+    try out.print("Link:       {s} [{s} {s} {s}]\n\n", .{
+        info.link_state,
+        info.link_kind,
+        info.link_speed,
+        info.link_duplex,
+    });
 }
 
 fn parseIfaceArg(args: []const [:0]u8) ?[]const u8 {
