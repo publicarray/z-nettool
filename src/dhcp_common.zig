@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const magic_cookie = [_]u8{ 0x63, 0x82, 0x53, 0x63 };
 
@@ -72,6 +73,81 @@ pub fn buildDiscover(alloc: std.mem.Allocator, xid: u32, mac: [6]u8) ![]u8 {
     try p.append(alloc, Opt.end);
 
     return try p.toOwnedSlice(alloc);
+}
+
+pub fn sendAndListenUdp(
+    alloc: std.mem.Allocator,
+    iface_name: ?[]const u8,
+    mac: [6]u8,
+    listen_seconds: u32,
+    print_sent: bool,
+) !void {
+    var out_buf: [4096]u8 = undefined;
+    var out_writer = std.fs.File.stdout().writer(&out_buf);
+    const out = &out_writer.interface;
+
+    var xid_buf: [4]u8 = undefined;
+    std.crypto.random.bytes(&xid_buf);
+    const xid = std.mem.readInt(u32, &xid_buf, .big);
+
+    const listen_addr = try std.net.Address.parseIp4("0.0.0.0", 68);
+    const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, 0);
+    defer std.posix.close(sock);
+
+    if (builtin.os.tag == .linux) {
+        if (iface_name) |name| {
+            const ifname_z = try std.heap.page_allocator.dupeZ(u8, name);
+            defer std.heap.page_allocator.free(ifname_z);
+            try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, 25, ifname_z);
+        }
+    }
+
+    try std.posix.setsockopt(
+        sock,
+        std.posix.SOL.SOCKET,
+        std.posix.SO.BROADCAST,
+        &std.mem.toBytes(@as(c_int, 1)),
+    );
+
+    std.posix.bind(sock, &listen_addr.any, listen_addr.getOsSockLen()) catch |e| {
+        if (e == error.AddressInUse and builtin.os.tag == .linux) {
+            try out.print("  [!] port 68 in use and pcap unavailable.\n", .{});
+            try out.flush();
+        }
+        return e;
+    };
+
+    const pkt = try buildDiscover(alloc, xid, mac);
+    defer alloc.free(pkt);
+
+    const bcast = try std.net.Address.parseIp4("255.255.255.255", 67);
+    _ = try std.posix.sendto(sock, pkt, 0, &bcast.any, bcast.getOsSockLen());
+
+    if (print_sent) {
+        try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
+        try out.print("  Listening for {d}s...\n", .{listen_seconds});
+        try out.flush();
+    }
+
+    var timer = try std.time.Timer.start();
+    var buf: [2048]u8 = undefined;
+
+    while (timer.read() < (@as(u64, listen_seconds) * std.time.ns_per_s)) {
+        var fds = [_]std.posix.pollfd{.{ .fd = sock, .events = std.posix.POLL.IN, .revents = 0 }};
+        const rc = try std.posix.poll(&fds, 250);
+        if (rc == 0) continue;
+
+        var from: std.posix.sockaddr = undefined;
+        var from_len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
+        const n = std.posix.recvfrom(sock, &buf, 0, &from, &from_len) catch continue;
+        if (n <= 0) continue;
+
+        const nn: usize = @intCast(n);
+        if (parseOfferFromBootp(buf[0..nn], xid)) |offer| {
+            try printOffer(out, offer, xid, labels_udp);
+            try out.flush();
+        }
+    }
 }
 
 fn maxLabelLen(labels: OfferLabels) usize {

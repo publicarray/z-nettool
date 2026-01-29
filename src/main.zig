@@ -58,6 +58,12 @@ pub fn main() !void {
         var info = try netinfo.getNetInfoCommon(alloc, selected_iface.name);
         defer info.deinit(alloc);
         try printNetInfo(out, info);
+    } else if (builtin.os.tag == .macos) {
+        try printDarwinPrereqWarnings(out, alloc);
+
+        var info = try netinfo.getNetInfoCommon(alloc, selected_iface.name);
+        defer info.deinit(alloc);
+        try printNetInfo(out, info);
     } else {
         try out.print("IP:         [unknown]\n", .{});
         try out.print("Link:       [unknown]\n\n", .{});
@@ -83,6 +89,23 @@ pub fn main() !void {
             if (e == error.LldpctlFailed) {
                 try out.print("  LLDP: lldpctl failed. Is lldpd running?\n", .{});
                 try out.print("  Hint: sudo systemctl start lldpd\n", .{});
+                try out.flush();
+                return;
+            }
+            return e;
+        };
+        defer {
+            for (neigh) |*n| n.deinit(alloc);
+            alloc.free(neigh);
+        }
+
+        try printLldpReport(out, neigh);
+    } else if (builtin.os.tag == .macos) {
+        try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
+        const neigh = lldp.collectAndParseCommon(alloc, selected_iface.name, lldpPacketCaptureTimeout) catch |e| {
+            if (e == error.LldpctlFailed) {
+                try out.print("  LLDP: lldpctl failed. Is lldpd installed/running?\n", .{});
+                try out.print("  Hint: brew install lldpd && sudo lldpd\n", .{});
                 try out.flush();
                 return;
             }
@@ -234,6 +257,17 @@ fn printLinuxPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
     }
     if (std.posix.geteuid() != 0) {
         try out.print("Warning: ICMP ping requires CAP_NET_RAW or root; ping tests may fail.\n", .{});
+        any = true;
+    }
+
+    if (any) try out.print("\n", .{});
+}
+
+fn printDarwinPrereqWarnings(out: anytype, alloc: std.mem.Allocator) !void {
+    var any = false;
+
+    if (!hasExecutableInPath(alloc, "lldpctl")) {
+        try out.print("Warning: lldpctl not found (install lldpd).\n", .{});
         any = true;
     }
 
