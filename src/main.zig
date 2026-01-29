@@ -27,6 +27,7 @@ pub fn main() !void {
     defer std.process.argsFree(alloc, args);
 
     const forced_iface = parseIfaceArg(args);
+    const force_dhcp_udp = hasFlag(args, "--dhcp-udp");
 
     var iface = if (builtin.os.tag == .windows)
         try (@import("iface_windows.zig").chooseInterface(alloc, forced_iface))
@@ -143,7 +144,7 @@ pub fn main() !void {
     try out.print("DHCP: sending DISCOVER and listening for OFFER...\n", .{});
     try out.flush();
 
-    try dhcp.discoverAndListen(alloc, iface.name, iface.mac, dhcpListenTimeout);
+    try dhcp.discoverAndListen(alloc, iface.name, iface.mac, dhcpListenTimeout, force_dhcp_udp);
 
     try out.flush();
     try waitForEnterOnWindowsIfNotTty();
@@ -247,6 +248,15 @@ fn parseIfaceArg(args: []const [:0]u8) ?[]const u8 {
         if (std.mem.eql(u8, a, "-i")) return std.mem.sliceTo(args[i + 1], 0);
     }
     return null;
+}
+
+fn hasFlag(args: []const [:0]u8, flag: []const u8) bool {
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const a = std.mem.sliceTo(args[i], 0);
+        if (std.mem.eql(u8, a, flag)) return true;
+    }
+    return false;
 }
 
 fn fmtMac(mac: *const [6]u8) [17:0]u8 {

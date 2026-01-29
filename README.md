@@ -20,6 +20,8 @@ A CLI tool that replicates some Netool PRO 2 functionality for network diagnosti
 sudo ./netool -i eth0
 # network report zig build
 sudo ./netool
+# force UDP DHCP (skip pcap) on Linux
+sudo ./netool --dhcp-udp
 ```
 
 ## Example Report
