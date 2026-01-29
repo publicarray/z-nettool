@@ -80,7 +80,7 @@ const IP_ADAPTER_ADDRESSES_LH = extern struct {
     FirstPrefix: ?*anyopaque,
 
     TransmitLinkSpeed: u64, // bits/sec
-    ReceiveLinkSpeed: u64,  // bits/sec
+    ReceiveLinkSpeed: u64, // bits/sec
 
     // struct continues; not needed
 };
@@ -94,12 +94,9 @@ const GetAdaptersAddressesFn = *const fn (
 ) callconv(.winapi) u32;
 
 fn loadGetAdaptersAddresses() !GetAdaptersAddressesFn {
-    const mod = LoadLibraryW(&[_:0]u16{ 'i','p','h','l','p','a','p','i','.','d','l','l' })
-        orelse return error.DllLoadFailed;
+    const mod = LoadLibraryW(&[_:0]u16{ 'i', 'p', 'h', 'l', 'p', 'a', 'p', 'i', '.', 'd', 'l', 'l' }) orelse return error.DllLoadFailed;
 
-    const sym = GetProcAddress(mod, &[_:0]u8{
-        'G','e','t','A','d','a','p','t','e','r','s','A','d','d','r','e','s','s','e','s'
-    }) orelse return error.SymbolNotFound;
+    const sym = GetProcAddress(mod, &[_:0]u8{ 'G', 'e', 't', 'A', 'd', 'a', 'p', 't', 'e', 'r', 's', 'A', 'd', 'd', 'r', 'e', 's', 's', 'e', 's' }) orelse return error.SymbolNotFound;
 
     return @ptrCast(sym);
 }
@@ -138,6 +135,56 @@ fn fmtBitsPerSec(buf: *[64]u8, bps: u64) ![]const u8 {
     return try std.fmt.bufPrint(buf, "{d:.0} Mbps", .{mbps});
 }
 
+fn psEscapeSingleQuotes(alloc: std.mem.Allocator, s: []const u8) ![]u8 {
+    var out = try std.ArrayList(u8).initCapacity(alloc, s.len);
+    errdefer out.deinit(alloc);
+    for (s) |c| {
+        if (c == '\'') {
+            try out.append(alloc, '\'');
+            try out.append(alloc, '\'');
+        } else {
+            try out.append(alloc, c);
+        }
+    }
+    return try out.toOwnedSlice(alloc);
+}
+
+fn getDuplex(alloc: std.mem.Allocator, iface_name: []const u8) !?[]u8 {
+    const esc = try psEscapeSingleQuotes(alloc, iface_name);
+    defer alloc.free(esc);
+
+    const ps = try std.fmt.allocPrint(
+        alloc,
+        "$d = (Get-NetAdapter -Name '{s}' -ErrorAction SilentlyContinue).MediaDuplexState; if ($d -ne $null) {{ $d }}",
+        .{esc},
+    );
+    defer alloc.free(ps);
+
+    var child = std.process.Child.init(&.{ "powershell", "-NoProfile", "-Command", ps }, alloc);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Ignore;
+    try child.spawn();
+
+    const out_bytes = try child.stdout.?.readToEndAlloc(alloc, 4 * 1024);
+    defer alloc.free(out_bytes);
+    _ = try child.wait();
+
+    const s = std.mem.trim(u8, out_bytes, " \t\r\n");
+    if (s.len == 0) return null;
+
+    if (std.mem.eql(u8, s, "1") or std.ascii.eqlIgnoreCase(s, "half")) {
+        return try alloc.dupe(u8, "half");
+    }
+    if (std.mem.eql(u8, s, "2") or std.ascii.eqlIgnoreCase(s, "full")) {
+        return try alloc.dupe(u8, "full");
+    }
+    if (std.mem.eql(u8, s, "0") or std.ascii.eqlIgnoreCase(s, "unknown")) {
+        return try alloc.dupe(u8, "unknown");
+    }
+
+    return try alloc.dupe(u8, s);
+}
+
 pub const NetInfo = struct {
     ip_cidr: []u8,
     link: []u8,
@@ -167,6 +214,9 @@ pub fn getIpAndLink(alloc: std.mem.Allocator, iface_name: []const u8) !NetInfo {
         var ip_buf: [32]u8 = undefined;
         var ip_str: []const u8 = "[unknown]";
 
+        const duplex_opt = getDuplex(alloc, iface_name) catch null;
+        defer if (duplex_opt) |d| alloc.free(d);
+
         var u: ?*IP_ADAPTER_UNICAST_ADDRESS_LH = a.FirstUnicastAddress;
         while (u) |ua| : (u = ua.Next) {
             const sa = ua.Address.lpSockaddr orelse continue;
@@ -187,14 +237,20 @@ pub fn getIpAndLink(alloc: std.mem.Allocator, iface_name: []const u8) !NetInfo {
             // Some drivers report 0; pick max of tx/rx
             const speed = if (a.TransmitLinkSpeed > a.ReceiveLinkSpeed) a.TransmitLinkSpeed else a.ReceiveLinkSpeed;
             const sp = if (speed > 0) try fmtBitsPerSec(&sp_buf, speed) else "unknown speed";
-            const link_s = try std.fmt.bufPrint(&link_buf, "{s} [ethernet {s}]", .{ if (up) "up" else "down", sp });
+            const link_s = if (duplex_opt) |d|
+                try std.fmt.bufPrint(&link_buf, "{s} [ethernet {s} {s}]", .{ if (up) "up" else "down", sp, d })
+            else
+                try std.fmt.bufPrint(&link_buf, "{s} [ethernet {s}]", .{ if (up) "up" else "down", sp });
             alloc.free(buf);
             return .{
                 .ip_cidr = try alloc.dupe(u8, ip_str),
                 .link = try alloc.dupe(u8, link_s),
             };
         } else {
-            const link_s = try std.fmt.bufPrint(&link_buf, "{s} [unknown]", .{ if (up) "up" else "down" });
+            const link_s = if (duplex_opt) |d|
+                try std.fmt.bufPrint(&link_buf, "{s} [unknown {s}]", .{ if (up) "up" else "down", d })
+            else
+                try std.fmt.bufPrint(&link_buf, "{s} [unknown]", .{if (up) "up" else "down"});
             alloc.free(buf);
             return .{
                 .ip_cidr = try alloc.dupe(u8, ip_str),

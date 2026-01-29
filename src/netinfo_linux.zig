@@ -72,19 +72,24 @@ fn readSysfsTrim(alloc: std.mem.Allocator, path: []const u8) ![]u8 {
 fn linkFromSysfs(alloc: std.mem.Allocator, iface: []const u8) ![]u8 {
     var p1: [256]u8 = undefined;
     var p2: [256]u8 = undefined;
+    var p3: [256]u8 = undefined;
 
     const oper = try std.fmt.bufPrint(&p1, "/sys/class/net/{s}/operstate", .{iface});
     const speedp = try std.fmt.bufPrint(&p2, "/sys/class/net/{s}/speed", .{iface});
+    const duplp = try std.fmt.bufPrint(&p3, "/sys/class/net/{s}/duplex", .{iface});
 
     const oper_s = readSysfsTrim(alloc, oper) catch return try alloc.dupe(u8, "[unknown]");
     defer alloc.free(oper_s);
 
+    const duplex_s = readSysfsTrim(alloc, duplp) catch return try std.fmt.allocPrint(alloc, "{s} [unknown duplex]", .{oper_s});
+    defer alloc.free(duplex_s);
+
     // speed may not exist (wifi often doesn't expose)
-    const speed_s = readSysfsTrim(alloc, speedp) catch return try std.fmt.allocPrint(alloc, "{s} [unknown]", .{oper_s});
+    const speed_s = readSysfsTrim(alloc, speedp) catch return try std.fmt.allocPrint(alloc, "{s} {s} [unknown speed]", .{ oper_s, duplex_s });
     defer alloc.free(speed_s);
 
     // speed is typically "1000" meaning Mb/s
-    const sp = std.fmt.parseInt(u32, speed_s, 10) catch return try std.fmt.allocPrint(alloc, "{s} [unknown]", .{oper_s});
+    const sp = std.fmt.parseInt(u32, speed_s, 10) catch return try std.fmt.allocPrint(alloc, "{s} {s} [unknown speed]", .{ oper_s, duplex_s });
 
-    return try std.fmt.allocPrint(alloc, "{s} {d}Mb/s", .{ oper_s, sp });
+    return try std.fmt.allocPrint(alloc, "{s} {d}Mb/s {s}", .{ oper_s, sp, duplex_s });
 }
