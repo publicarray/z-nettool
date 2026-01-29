@@ -7,11 +7,11 @@ pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
     const sock = std.posix.socket(std.posix.AF.INET, std.posix.SOCK.RAW, std.posix.IPPROTO.ICMP) catch return null;
     defer std.posix.close(sock);
 
-    const id: u16 = @truncate(@as(u32, @intCast(std.os.linux.getpid())));
-    const seq: u16 = 1;
+    const id: u16 = ping_common.randomU16();
+    const seq: u16 = ping_common.randomU16();
 
     var payload: [32]u8 = undefined;
-    @memset(&payload, 0xA5);
+    ping_common.fillRandom(&payload);
 
     var packet: [8 + payload.len]u8 = undefined;
     packet[0] = 8; // echo request
@@ -42,13 +42,27 @@ pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
         if (rc == 0) return null;
 
         var recv_buf: [1024]u8 = undefined;
-        const n = std.posix.recvfrom(sock, &recv_buf, 0, null, null) catch continue;
+        var from_storage: std.posix.sockaddr.storage = undefined;
+        var from_len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);
+        const n = std.posix.recvfrom(
+            sock,
+            &recv_buf,
+            0,
+            @ptrCast(&from_storage),
+            &from_len,
+        ) catch continue;
         if (n < 20 + 8) continue;
+
+        if (from_storage.family != std.posix.AF.INET) continue;
+        const from_in: *const std.posix.sockaddr.in = @ptrCast(@alignCast(&from_storage));
+        if (from_in.addr != addr.in.sa.addr) continue;
 
         const ip_header_len = (@as(usize, recv_buf[0] & 0x0F)) * 4;
         if (n < ip_header_len + 8) continue;
         const icmp = recv_buf[ip_header_len..n];
         if (icmp[0] != 0 or icmp[1] != 0) continue;
+        if (icmp.len < 8 + payload.len) continue;
+        if (!std.mem.eql(u8, icmp[8 .. 8 + payload.len], &payload)) continue;
         const r_id = std.mem.readInt(u16, icmp[4..6], .big);
         const r_seq = std.mem.readInt(u16, icmp[6..8], .big);
         if (r_id != id or r_seq != seq) continue;

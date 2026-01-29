@@ -44,7 +44,7 @@ pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
     defer _ = IcmpApi.IcmpCloseHandle(handle);
 
     var payload: [32]u8 = undefined;
-    @memset(&payload, 0x42);
+    ping_common.fillRandom(&payload);
 
     var opts: IcmpApi.IP_OPTION_INFORMATION = .{
         .Ttl = 64,
@@ -69,5 +69,11 @@ pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
 
     const reply: *IcmpApi.ICMP_ECHO_REPLY = @ptrCast(@alignCast(&reply_buf));
     if (reply.Status != 0) return null;
+    if (reply.Address != dest) return null;
+    if (reply.Data == null) return null;
+    if (reply.DataSize != payload.len) return null;
+    const data_ptr: [*]const u8 = @ptrCast(reply.Data.?);
+    const data = data_ptr[0..payload.len];
+    if (!std.mem.eql(u8, data, &payload)) return null;
     return @as(f64, @floatFromInt(reply.RoundTripTime));
 }

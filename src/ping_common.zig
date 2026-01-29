@@ -22,3 +22,13 @@ pub fn icmpChecksum(bytes: []const u8) u16 {
     }
     return ~@as(u16, @intCast(sum));
 }
+
+pub fn fillRandom(buf: []u8) void {
+    std.crypto.random.bytes(buf);
+}
+
+pub fn randomU16() u16 {
+    var b: [2]u8 = undefined;
+    fillRandom(&b);
+    return std.mem.readInt(u16, &b, .big);
+}
