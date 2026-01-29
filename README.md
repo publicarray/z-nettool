@@ -16,10 +16,12 @@ A CLI tool that replicates some Netool PRO 2 functionality for network diagnosti
 ## Usage
 
 ```bash
-# network report go build
-sudo ./netool -i eth0
-# network report zig build
+# network report
 sudo ./netool
+
+# network report
+sudo ./netool -i eth0
+
 # force UDP DHCP (skip pcap) on Linux
 sudo ./netool --dhcp-udp
 ```
@@ -70,16 +72,9 @@ https://ziglang.org/documentation/0.14.1/#Build-Mode
 zig build -Doptimize=ReleaseSmall
 ```
 
-## Go Build
-
-```bash
-make build
-```
-
 ## Requirements
 
 - Root privileges for full functionality
-- Go 1.19+
 - Zig 0.15.2
 - Linux: libpcap
 - Linux: lldpctl
