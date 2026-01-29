@@ -37,8 +37,8 @@ pub fn collectAndParse(alloc: std.mem.Allocator, listen_seconds: u32) ![]Neighbo
         "--file-name", PktmonFile,
     });
 
-    // Wait capture window
-    std.Thread.sleep(@as(u64, listen_seconds) * std.time.ns_per_s);
+    // Wait capture window with a simple countdown
+    try printCountdown(listen_seconds);
 
     // Stop + convert to text with hex
     _ = run(alloc, &.{ "pktmon", "stop" }) catch {};
@@ -49,6 +49,22 @@ pub fn collectAndParse(alloc: std.mem.Allocator, listen_seconds: u32) ![]Neighbo
     _ = std.fs.cwd().deleteFile(PktmonFile) catch {};
     _ = std.fs.cwd().deleteFile(PktmonTxt) catch {};
     return data;
+}
+
+fn printCountdown(listen_seconds: u32) !void {
+    var out_buf: [256]u8 = undefined;
+    var out_writer = std.fs.File.stdout().writer(&out_buf);
+    const out = &out_writer.interface;
+
+    var remaining: u32 = listen_seconds;
+    while (remaining > 0) : (remaining -= 1) {
+        try out.print("\r  Capturing LLDP... {d}s remaining ", .{remaining});
+        try out.flush();
+        std.Thread.sleep(std.time.ns_per_s);
+    }
+
+    try out.print("\r  Capturing LLDP... done.          \n", .{});
+    try out.flush();
 }
 
 fn run(alloc: std.mem.Allocator, argv: []const []const u8) !void {
