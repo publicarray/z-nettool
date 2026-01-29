@@ -79,3 +79,4 @@ make build
 - Root privileges for full functionality
 - Go 1.19+
 - Zig 0.15.2
+- Linux: libpcap
