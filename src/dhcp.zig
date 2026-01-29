@@ -15,6 +15,12 @@ pub fn discoverAndListen(
     const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, 0);
     defer std.posix.close(sock);
 
+    if (builtin.os.tag == .linux) {
+        const ifname_z = try std.heap.page_allocator.dupeZ(u8, iface_name);
+        defer std.heap.page_allocator.free(ifname_z);
+        try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, 25, ifname_z);
+    }
+
     try std.posix.setsockopt(
         sock,
         std.posix.SOL.SOCKET,
@@ -29,7 +35,7 @@ pub fn discoverAndListen(
     std.posix.bind(sock, &listen_addr.any, listen_addr.getOsSockLen()) catch |e| {
         if (e == error.AddressInUse and builtin.os.tag == .linux) {
             // send DISCOVER from an ephemeral socket (don’t bind 68), then sniff via pcap
-            try sendDiscoverEphemeral(alloc, xid, mac);
+            try sendDiscoverEphemeral(alloc, iface_name, xid, mac);
             const pcap = @import("dhcp_pcap_linux.zig");
             try pcap.sniffOffersLinux(iface_name, xid, listen_seconds);
             return;
@@ -74,9 +80,15 @@ pub fn discoverAndListen(
     }
 }
 
-fn sendDiscoverEphemeral(alloc: std.mem.Allocator, xid: u32, mac: [6]u8) !void {
+fn sendDiscoverEphemeral(alloc: std.mem.Allocator, iface_name: []const u8, xid: u32, mac: [6]u8) !void {
     const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, 0);
     defer std.posix.close(sock);
+
+    if (builtin.os.tag == .linux) {
+        const ifname_z = try std.heap.page_allocator.dupeZ(u8, iface_name);
+        defer std.heap.page_allocator.free(ifname_z);
+        try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, 25, ifname_z);
+    }
 
     try std.posix.setsockopt(
         sock,
