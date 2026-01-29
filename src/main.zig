@@ -82,6 +82,24 @@ pub fn main() !void {
                 try out.print("  Chassis:{s}\n\n", .{n.chassis_id});
             }
         }
+    } else if (builtin.os.tag == .linux) {
+        try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
+        const allocator = std.heap.page_allocator;
+        const lldp = @import("lldp_linux.zig");
+
+        var info = try lldp.parseLLDP(allocator, iface.name);
+        defer info.deinit(allocator);
+
+        try out.print("  System: {s}\n", .{info.sys_name orelse "(none)"});
+        try out.print("  PortID: {s}\n", .{info.port_id orelse "(none)"});
+        try out.print("  PortDescr: {s}\n", .{info.port_descr orelse "(none)"});
+
+        if (info.vlans.items.len == 0) {
+            try out.print("  VLANs: (none)\n", .{});
+        } else {
+            try out.print("  VLANs:\n", .{});
+            for (info.vlans.items) |v| try out.print("  - {s}\n", .{v});
+        }
     }
 
     const tests = @import("network_tests.zig");
