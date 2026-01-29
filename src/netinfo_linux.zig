@@ -1,5 +1,7 @@
 const std = @import("std");
+const linux = std.os.linux;
 const common = @import("netinfo_common.zig");
+const wifi = @import("netinfo_linux_wifi.zig");
 const c = @cImport({
     @cInclude("ifaddrs.h");
     @cInclude("net/if.h");
@@ -108,7 +110,10 @@ fn readSysfsTrim(alloc: std.mem.Allocator, path: []const u8) ![]u8 {
     const f = try std.fs.openFileAbsolute(path, .{});
     defer f.close();
     var buf: [128]u8 = undefined;
-    const n = try f.readAll(&buf);
+    const rc = linux.read(@intCast(f.handle), &buf, buf.len);
+    const signed: isize = @bitCast(rc);
+    if (signed < 0) return error.SysfsReadFailed;
+    const n: usize = @intCast(signed);
     return try alloc.dupe(u8, std.mem.trim(u8, buf[0..n], " \t\r\n"));
 }
 
@@ -142,6 +147,7 @@ fn linkPartsFromSysfs(alloc: std.mem.Allocator, iface: []const u8) !LinkParts {
 
     var kind_s: []u8 = undefined;
     var speed_out: []u8 = undefined;
+    var duplex_out: []u8 = duplex_s;
 
     const sp = std.fmt.parseInt(u32, speed_s, 10) catch null;
     if (sp) |mbps| {
@@ -153,8 +159,22 @@ fn linkPartsFromSysfs(alloc: std.mem.Allocator, iface: []const u8) !LinkParts {
             speed_out = try std.fmt.allocPrint(alloc, "{d} Mbps", .{mbps});
         }
     } else {
-        kind_s = try alloc.dupe(u8, "unknown");
-        speed_out = try alloc.dupe(u8, "unknown speed");
+        if (isWirelessIface(iface)) {
+            if (try wifi.phySpeedFromNl80211(alloc, iface)) |s| {
+                kind_s = try alloc.dupe(u8, "wifi");
+                speed_out = s;
+            } else {
+                kind_s = try alloc.dupe(u8, "wifi");
+                speed_out = try alloc.dupe(u8, "unknown speed");
+            }
+            if (!std.mem.eql(u8, duplex_out, "half")) {
+                alloc.free(duplex_out);
+                duplex_out = try alloc.dupe(u8, "half");
+            }
+        } else {
+            kind_s = try alloc.dupe(u8, "unknown");
+            speed_out = try alloc.dupe(u8, "unknown speed");
+        }
     }
 
     const state_s = try alloc.dupe(u8, oper_s);
@@ -166,6 +186,14 @@ fn linkPartsFromSysfs(alloc: std.mem.Allocator, iface: []const u8) !LinkParts {
         .state = state_s,
         .kind = kind_s,
         .speed = speed_out,
-        .duplex = duplex_s,
+        .duplex = duplex_out,
     };
+}
+
+fn isWirelessIface(iface: []const u8) bool {
+    var buf: [256]u8 = undefined;
+    const path = std.fmt.bufPrint(&buf, "/sys/class/net/{s}/wireless", .{iface}) catch return false;
+    var dir = std.fs.openDirAbsolute(path, .{}) catch return false;
+    dir.close();
+    return true;
 }
