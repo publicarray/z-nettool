@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const dhcp = @import("dhcp.zig");
 const iface = @import("iface.zig");
 const lldp = @import("lldp.zig");
+const lldp_darwin = @import("lldp_darwin.zig");
 const netinfo = @import("netinfo.zig");
 const term_colour = @import("term_colour.zig");
 const network_tests = @import("network_tests.zig");
@@ -31,6 +32,7 @@ pub fn main() !void {
 
     const forced_iface = parseIfaceArg(args);
     const force_dhcp_udp = hasFlag(args, "--dhcp-udp");
+    const force_lldp_ctl = hasFlag(args, "--lldp-ctl");
 
     var selected_iface = iface.chooseInterface(alloc, forced_iface) catch |e| {
         if (e == error.UnsupportedOS) {
@@ -100,10 +102,18 @@ pub fn main() !void {
         try printLldpReport(out, neigh);
     } else if (builtin.os.tag == .macos) {
         try out.print("\nSwitch / VLAN Info (LLDP)\n", .{});
-        const neigh = lldp.collectAndParseCommon(alloc, selected_iface.name, lldpPacketCaptureTimeout) catch |e| {
+        const neigh = (if (force_lldp_ctl)
+            lldp_darwin.collectAndParseCommonCtl(alloc, selected_iface.name)
+        else
+            lldp.collectAndParseCommon(alloc, selected_iface.name, lldpPacketCaptureTimeout)) catch |e| {
             if (e == error.LldpctlFailed) {
                 try out.print("  LLDP: lldpctl failed. Is lldpd installed/running?\n", .{});
                 try out.print("  Hint: brew install lldpd && sudo lldpd\n", .{});
+                try out.flush();
+                return;
+            }
+            if (e == error.CaptureFailed) {
+                try out.print("  LLDP: capture failed. Try running as root (sudo ./netool).\n", .{});
                 try out.flush();
                 return;
             }

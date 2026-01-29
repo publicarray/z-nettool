@@ -1,5 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const c = @cImport({
+    @cInclude("netinet/in.h");
+    @cInclude("net/if.h");
+    @cInclude("sys/socket.h");
+});
 
 pub const magic_cookie = [_]u8{ 0x63, 0x82, 0x53, 0x63 };
 
@@ -37,6 +42,11 @@ pub const OfferLabels = struct {
     dns: []const u8,
 };
 
+pub const UdpListenResult = struct {
+    got_offer: bool = false,
+    received_any: bool = false,
+};
+
 pub const labels_default = OfferLabels{
     .ip = "IP Offered",
     .server = "Server",
@@ -52,6 +62,15 @@ pub const labels_udp = OfferLabels{
     .router = "Router",
     .dns = "DNS",
 };
+
+pub fn configureDhcpSocket(sock: std.posix.socket_t) !void {
+    const one = std.mem.toBytes(@as(c_int, 1));
+    try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, &one);
+    if (builtin.os.tag == .macos) {
+        try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &one);
+    }
+    try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.BROADCAST, &one);
+}
 
 pub fn buildDiscover(alloc: std.mem.Allocator, xid: u32, mac: [6]u8) ![]u8 {
     var p = try std.ArrayList(u8).initCapacity(alloc, 300);
@@ -82,6 +101,16 @@ pub fn sendAndListenUdp(
     listen_seconds: u32,
     print_sent: bool,
 ) !void {
+    _ = try sendAndListenUdpWithResult(alloc, iface_name, mac, listen_seconds, print_sent);
+}
+
+pub fn sendAndListenUdpWithResult(
+    alloc: std.mem.Allocator,
+    iface_name: ?[]const u8,
+    mac: [6]u8,
+    listen_seconds: u32,
+    print_sent: bool,
+) !UdpListenResult {
     var out_buf: [4096]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);
     const out = &out_writer.interface;
@@ -94,6 +123,8 @@ pub fn sendAndListenUdp(
     const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, 0);
     defer std.posix.close(sock);
 
+    try configureDhcpSocket(sock);
+
     if (builtin.os.tag == .linux) {
         if (iface_name) |name| {
             const ifname_z = try std.heap.page_allocator.dupeZ(u8, name);
@@ -101,13 +132,21 @@ pub fn sendAndListenUdp(
             try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, 25, ifname_z);
         }
     }
-
-    try std.posix.setsockopt(
-        sock,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.BROADCAST,
-        &std.mem.toBytes(@as(c_int, 1)),
-    );
+    if (builtin.os.tag == .macos) {
+        if (iface_name) |name| {
+            const ifname_z = try std.heap.page_allocator.dupeZ(u8, name);
+            defer std.heap.page_allocator.free(ifname_z);
+            const ifindex = c.if_nametoindex(ifname_z);
+            if (ifindex != 0) {
+                try std.posix.setsockopt(
+                    sock,
+                    c.IPPROTO_IP,
+                    c.IP_BOUND_IF,
+                    &std.mem.toBytes(@as(c_uint, ifindex)),
+                );
+            }
+        }
+    }
 
     std.posix.bind(sock, &listen_addr.any, listen_addr.getOsSockLen()) catch |e| {
         if (e == error.AddressInUse and builtin.os.tag == .linux) {
@@ -121,20 +160,32 @@ pub fn sendAndListenUdp(
     defer alloc.free(pkt);
 
     const bcast = try std.net.Address.parseIp4("255.255.255.255", 67);
-    _ = try std.posix.sendto(sock, pkt, 0, &bcast.any, bcast.getOsSockLen());
-
-    if (print_sent) {
-        try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
-        try out.print("  Listening for {d}s...\n", .{listen_seconds});
-        try out.flush();
-    }
-
     var timer = try std.time.Timer.start();
+    const send_after_ns: u64 = 100 * std.time.ns_per_ms;
+    const total_ns: u64 = @as(u64, listen_seconds) * std.time.ns_per_s;
+    var sent = false;
     var buf: [2048]u8 = undefined;
+    var debug_non_offer_printed = false;
+    var received_any = false;
+    var got_offer = false;
 
-    while (timer.read() < (@as(u64, listen_seconds) * std.time.ns_per_s)) {
+    while (timer.read() < total_ns) {
+        const now = timer.read();
+        if (!sent and now >= send_after_ns) {
+            _ = try std.posix.sendto(sock, pkt, 0, &bcast.any, bcast.getOsSockLen());
+            sent = true;
+            if (print_sent) {
+                try out.print("  Sent DISCOVER (xid=0x{x})\n", .{xid});
+                try out.print("  Listening for {d}s...\n", .{listen_seconds});
+                try out.flush();
+            }
+        }
+
+        const wait_ns = if (sent or now >= send_after_ns) 250 * std.time.ns_per_ms else (send_after_ns - now);
+        const wait_ms: i32 = @intCast(@min(wait_ns, total_ns - now) / std.time.ns_per_ms);
+
         var fds = [_]std.posix.pollfd{.{ .fd = sock, .events = std.posix.POLL.IN, .revents = 0 }};
-        const rc = try std.posix.poll(&fds, 250);
+        const rc = try std.posix.poll(&fds, wait_ms);
         if (rc == 0) continue;
 
         var from: std.posix.sockaddr = undefined;
@@ -143,11 +194,24 @@ pub fn sendAndListenUdp(
         if (n <= 0) continue;
 
         const nn: usize = @intCast(n);
+        received_any = true;
         if (parseOfferFromBootp(buf[0..nn], xid)) |offer| {
+            got_offer = true;
             try printOffer(out, offer, xid, labels_udp);
+            try out.flush();
+        } else if (!debug_non_offer_printed) {
+            debug_non_offer_printed = true;
+            try out.print("  [debug] received {d} bytes but no DHCP offer parsed\n", .{nn});
             try out.flush();
         }
     }
+
+    if (sent and !received_any) {
+        try out.print("  [debug] no UDP packets received on port 68\n", .{});
+        try out.flush();
+    }
+
+    return .{ .got_offer = got_offer, .received_any = received_any };
 }
 
 fn maxLabelLen(labels: OfferLabels) usize {
@@ -179,11 +243,17 @@ fn printField(out: anytype, label: []const u8, value: []const u8, max_label: usi
 pub fn printOffer(out: anytype, offer: Offer, xid_expected: u32, labels: OfferLabels) !void {
     try out.print("\n  DHCP OFFER:\n", .{});
     const max_label = maxLabelLen(labels);
-    try printField(out, labels.ip, &offer.your_ip, max_label);
-    if (offer.server_id.len != 0) try printField(out, labels.server, &offer.server_id, max_label);
-    if (offer.lease.len != 0) try printField(out, labels.lease, &offer.lease, max_label);
-    if (offer.router.len != 0) try printField(out, labels.router, &offer.router, max_label);
-    if (offer.dns.len != 0) try printField(out, labels.dns, &offer.dns, max_label);
+    const ip = std.mem.trimRight(u8, &offer.your_ip, "\x00");
+    const server = std.mem.trimRight(u8, &offer.server_id, "\x00");
+    const lease = std.mem.trimRight(u8, &offer.lease, "\x00");
+    const router = std.mem.trimRight(u8, &offer.router, "\x00");
+    const dns = std.mem.trimRight(u8, &offer.dns, " \x00");
+
+    try printField(out, labels.ip, if (ip.len != 0) ip else &offer.your_ip, max_label);
+    if (server.len != 0) try printField(out, labels.server, server, max_label);
+    if (lease.len != 0) try printField(out, labels.lease, lease, max_label);
+    if (router.len != 0) try printField(out, labels.router, router, max_label);
+    if (dns.len != 0) try printField(out, labels.dns, dns, max_label);
     if (!offer.xid_match) {
         var buf: [64]u8 = undefined;
         const s = std.fmt.bufPrint(&buf, "0x{x} (expected 0x{x})", .{ offer.xid, xid_expected }) catch return;

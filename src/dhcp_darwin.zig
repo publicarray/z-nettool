@@ -1,5 +1,7 @@
 const std = @import("std");
 const dhcp_common = @import("dhcp_common.zig");
+const dhcp_tcpdump = @import("dhcp_tcpdump_darwin.zig");
+const dhcp_udp = @import("dhcp_udp_darwin.zig");
 
 pub fn discoverAndListen(
     alloc: std.mem.Allocator,
@@ -8,6 +10,6 @@ pub fn discoverAndListen(
     listen_seconds: u32,
     force_udp: bool,
 ) !void {
-    _ = force_udp;
-    return dhcp_common.sendAndListenUdp(alloc, iface_name, mac, listen_seconds, true);
+    if (force_udp) return dhcp_udp.discoverAndListenUdp(alloc, iface_name, mac, listen_seconds);
+    return dhcp_tcpdump.captureOfferViaTcpdump(alloc, iface_name, mac, listen_seconds);
 }
