@@ -10,6 +10,8 @@ pub const Offer = struct {
     router: [16]u8 = [_]u8{0} ** 16,
     dns: [64]u8 = [_]u8{0} ** 64,
     lease: [32]u8 = [_]u8{0} ** 32,
+    xid: u32 = 0,
+    xid_match: bool = true,
 };
 
 fn rd16be(b: []const u8) u16 {
@@ -79,6 +81,9 @@ pub fn sniffOffersLinux(
             if (offer.lease.len != 0) try out.print("    Lease Time:  {s}\n", .{offer.lease});
             if (offer.router.len != 0) try out.print("    Router:      {s}\n", .{offer.router});
             if (offer.dns.len != 0) try out.print("    DNS:         {s}\n", .{offer.dns});
+            if (!offer.xid_match) {
+                try out.print("    XID:         0x{x} (expected 0x{x})\n", .{ offer.xid, xid_expected });
+            }
             try out.flush();
 
             // If you want: stop after first offer
@@ -134,11 +139,10 @@ fn parseOfferFromBootp(pkt: []const u8, xid_expected: u32) ?Offer {
     if (pkt[0] != 2) return null; // BOOTREPLY
 
     const xid = rd32be(pkt[4..8]);
-    if (xid != xid_expected) return null;
 
     if (!std.mem.eql(u8, pkt[236..240], &.{ 0x63, 0x82, 0x53, 0x63 })) return null;
 
-    var offer: Offer = .{};
+    var offer: Offer = .{ .xid = xid, .xid_match = (xid == xid_expected) };
     const yiaddr = pkt[16..20];
     _ = std.fmt.bufPrint(&offer.your_ip, "{d}.{d}.{d}.{d}", .{ yiaddr[0], yiaddr[1], yiaddr[2], yiaddr[3] }) catch {};
 
