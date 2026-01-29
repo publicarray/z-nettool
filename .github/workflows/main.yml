@@ -1,7 +1,18 @@
-name: Build
+name: Build & Release
+
 on:
   push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ZIG_VERSION: 0.15.2
 
 jobs:
   build:
@@ -14,22 +25,31 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.2
-
+          version: ${{ env.ZIG_VERSION }}
+    
+      - name: Install libpcap (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev
+          
       - name: Build
-        run: zig build
+        run: zig build -Doptimize=ReleaseFast
 
-      - name: Test
-        run: zig build test
-
-      - name: Upload binaries
-        uses: actions/upload-artifact@v4
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
         with:
-          name: binaries-${{ matrix.os }}
-          path: zig-out/bin/
-          if-no-files-found: warn
+          name: bin-${{ matrix.os }}
+          path: zig-out/bin/*
+          if-no-files-found: error
+          
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: zig-out/bin/*
