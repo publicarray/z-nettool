@@ -24,7 +24,7 @@ pub fn captureOfferViaTcpdump(
     try out.flush();
 
     var child = std.process.Child.init(&[_][]const u8{
-        "tcpdump", "-n",  "-l",  "-U",   "-s", "0",   "-XX", "-c",   "1",  "-i", iface_name,
+        "tcpdump", "-n",  "-l",  "-U",   "-s", "0",   "-XX", "-i",   iface_name,
         "udp",     "and", "src", "port", "67", "and", "dst", "port", "68",
     }, alloc);
     child.stdout_behavior = .Pipe;
@@ -88,23 +88,39 @@ pub fn captureOfferViaTcpdump(
         return;
     }
 
-    if (parseOfferFromTcpdumpText(alloc, output.items, xid)) |offer| {
-        try dhcp_common.printOffer(out, offer, xid, dhcp_common.labels_udp);
-        try out.print("\n", .{});
+    const offers = parseOffersFromTcpdumpText(alloc, output.items, xid) catch {
+        try out.print("  [debug] tcpdump captured data but parsing failed\n", .{});
         try out.flush();
-    } else {
+        return;
+    };
+    defer alloc.free(offers);
+
+    if (offers.len == 0) {
         try out.print("  [debug] tcpdump captured packet but no DHCP offer parsed\n", .{});
         try out.flush();
+        return;
     }
+
+    if (offers.len > 1) {
+        try out.print("  Multiple DHCP offers detected ({d}):\n", .{offers.len});
+    }
+    for (offers) |offer| {
+        try dhcp_common.printOffer(out, offer, xid, dhcp_common.labels_default);
+        try out.print("\n", .{});
+    }
+    try out.flush();
 }
 
-fn parseOfferFromTcpdumpText(
+fn parseOffersFromTcpdumpText(
     alloc: std.mem.Allocator,
     text: []const u8,
     xid_expected: u32,
-) ?dhcp_common.Offer {
-    var bytes = std.ArrayList(u8).initCapacity(alloc, 0) catch return null;
-    defer bytes.deinit(alloc);
+) ![]dhcp_common.Offer {
+    var offers = try std.ArrayList(dhcp_common.Offer).initCapacity(alloc, 1);
+    errdefer offers.deinit(alloc);
+
+    var current = try std.ArrayList(u8).initCapacity(alloc, 0);
+    defer current.deinit(alloc);
 
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line_raw| {
@@ -112,12 +128,25 @@ fn parseOfferFromTcpdumpText(
         if (std.mem.indexOf(u8, line, "0x") != null and std.mem.indexOfScalar(u8, line, ':') != null) {
             const colon = std.mem.indexOfScalar(u8, line, ':').?;
             const rhs = line[colon + 1 ..];
-            appendHexBytes(alloc, &bytes, rhs) catch return null;
+            try appendHexBytes(alloc, &current, rhs);
+            continue;
+        }
+
+        if (current.items.len != 0) {
+            if (parseOfferFromFrame(current.items, xid_expected)) |offer| {
+                try offers.append(alloc, offer);
+            }
+            current.clearRetainingCapacity();
         }
     }
 
-    if (bytes.items.len == 0) return null;
-    return parseOfferFromFrame(bytes.items, xid_expected);
+    if (current.items.len != 0) {
+        if (parseOfferFromFrame(current.items, xid_expected)) |offer| {
+            try offers.append(alloc, offer);
+        }
+    }
+
+    return try offers.toOwnedSlice(alloc);
 }
 
 fn appendHexBytes(alloc: std.mem.Allocator, dst: *std.ArrayList(u8), s: []const u8) !void {

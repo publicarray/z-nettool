@@ -55,14 +55,6 @@ pub const labels_default = OfferLabels{
     .dns = "DNS",
 };
 
-pub const labels_udp = OfferLabels{
-    .ip = "Your IP",
-    .server = "Server ID",
-    .lease = "Lease",
-    .router = "Router",
-    .dns = "DNS",
-};
-
 pub fn configureDhcpSocket(sock: std.posix.socket_t) !void {
     const one = std.mem.toBytes(@as(c_int, 1));
     try std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, &one);
@@ -197,7 +189,7 @@ pub fn sendAndListenUdpWithResult(
         received_any = true;
         if (parseOfferFromBootp(buf[0..nn], xid)) |offer| {
             got_offer = true;
-            try printOffer(out, offer, xid, labels_udp);
+            try printOffer(out, offer, xid, labels_default);
             try out.flush();
         } else if (!debug_non_offer_printed) {
             debug_non_offer_printed = true;
