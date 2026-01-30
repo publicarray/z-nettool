@@ -70,6 +70,14 @@ https://ziglang.org/documentation/0.14.1/#Build-Mode
 
 ```bash
 zig build -Doptimize=ReleaseSmall
+# Intel macOS:
+zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSmall
+# Apple Silicon:
+zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSmall
+# Windows:
+zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSmall
+# Linux:
+zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSmall
 ```
 
 ## Requirements
