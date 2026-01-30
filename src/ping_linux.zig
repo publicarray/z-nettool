@@ -2,9 +2,12 @@ const std = @import("std");
 const ping_common = @import("ping_common.zig");
 
 pub fn pingMs(alloc: std.mem.Allocator, host: []const u8) !?f64 {
+    if (std.posix.geteuid() != 0) return null;
     const addr = (try ping_common.resolveIpv4(alloc, host)) orelse return null;
 
-    const sock = std.posix.socket(std.posix.AF.INET, std.posix.SOCK.RAW, std.posix.IPPROTO.ICMP) catch return null;
+    const sock_rc = std.posix.system.socket(std.posix.AF.INET, std.posix.SOCK.RAW, std.posix.IPPROTO.ICMP);
+    if (std.posix.errno(sock_rc) != .SUCCESS) return null;
+    const sock: std.posix.fd_t = @intCast(sock_rc);
     defer std.posix.close(sock);
 
     const id: u16 = ping_common.randomU16();

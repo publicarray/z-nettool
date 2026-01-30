@@ -174,7 +174,10 @@ pub fn main() !void {
     try out.print("DHCP: sending DISCOVER and listening for OFFER...\n", .{});
     try out.flush();
 
-    try dhcp.discoverAndListen(alloc, selected_iface.name, selected_iface.mac, dhcpListenTimeout, force_dhcp_udp);
+    dhcp.discoverAndListen(alloc, selected_iface.name, selected_iface.mac, dhcpListenTimeout, force_dhcp_udp) catch |e| switch (e) {
+        error.AccessDenied => try out.print("  [!] DHCP requires root privileges; run with sudo.\n", .{}),
+        else => return e,
+    };
 
     try out.flush();
     try waitForEnterOnWindowsIfNotTty();

@@ -108,7 +108,7 @@ pub fn phySpeedFromNl80211(alloc: std.mem.Allocator, iface: []const u8) !?[]u8 {
         nl80211_id = id;
     } else |_| {}
     if (nl80211_id == 0) {
-        nl80211_id = getNl80211FamilyId(fd, pid, debug) catch return null;
+        nl80211_id = getNl80211FamilyId(fd, pid) catch return null;
     }
     if (nl80211_id == 0) {
         if (phySpeedFromDebugfs(alloc, iface)) |s| return s;
@@ -132,7 +132,7 @@ pub fn phySpeedFromNl80211(alloc: std.mem.Allocator, iface: []const u8) !?[]u8 {
     return phySpeedFromDebugfs(alloc, iface);
 }
 
-fn getNl80211FamilyId(fd: std.posix.fd_t, pid: u32, debug: bool) !u16 {
+fn getNl80211FamilyId(fd: std.posix.fd_t, pid: u32) !u16 {
     var buf: [256]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
     const w = fbs.writer();
@@ -172,15 +172,15 @@ fn getNl80211FamilyId(fd: std.posix.fd_t, pid: u32, debug: bool) !u16 {
         if (rc == 0) break;
         const n = std.posix.recvfrom(fd, &recv_buf, 0, null, null) catch break;
         if (n <= 0) break;
-        if (parseFamilyId(recv_buf[0..@intCast(n)], debug)) |id| {
+        if (parseFamilyId(recv_buf[0..@intCast(n)])) |id| {
             if (id != 0) return id;
         } else |_| {}
     }
-    const dump_id = try getNl80211FamilyIdDump(fd, pid, debug);
+    const dump_id = try getNl80211FamilyIdDump(fd, pid);
     return dump_id;
 }
 
-fn parseFamilyId(buf: []const u8, debug: bool) !u16 {
+fn parseFamilyId(buf: []const u8) !u16 {
     var off: usize = 0;
     while (off + @sizeOf(nlmsghdr) <= buf.len) {
         var hdr: nlmsghdr = undefined;
@@ -229,7 +229,7 @@ fn parseFamilyId(buf: []const u8, debug: bool) !u16 {
     return 0;
 }
 
-fn getNl80211FamilyIdDump(fd: std.posix.fd_t, pid: u32, debug: bool) !u16 {
+fn getNl80211FamilyIdDump(fd: std.posix.fd_t, pid: u32) !u16 {
     var msg = try std.ArrayList(u8).initCapacity(std.heap.page_allocator, 128);
     defer msg.deinit(std.heap.page_allocator);
 
@@ -257,14 +257,14 @@ fn getNl80211FamilyIdDump(fd: std.posix.fd_t, pid: u32, debug: bool) !u16 {
         if (rc == 0) break;
         const n = std.posix.recvfrom(fd, &recv_buf, 0, null, null) catch break;
         if (n <= 0) break;
-        if (parseFamilyIdDump(recv_buf[0..@intCast(n)], debug)) |id| {
+        if (parseFamilyIdDump(recv_buf[0..@intCast(n)])) |id| {
             if (id != 0) return id;
         } else |_| {}
     }
     return 0;
 }
 
-fn parseFamilyIdDump(buf: []const u8, debug: bool) !u16 {
+fn parseFamilyIdDump(buf: []const u8) !u16 {
     var off: usize = 0;
     while (off + @sizeOf(nlmsghdr) <= buf.len) {
         var hdr: nlmsghdr = undefined;
