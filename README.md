@@ -75,7 +75,7 @@ zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSmall
 # Apple Silicon:
 zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSmall
 # Windows:
-zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSmall
+zig build -Dtarget=x86_64-windows -Dcpu=baseline -Doptimize=ReleaseSmall
 # Linux:
 zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSmall
 ```

@@ -31,3 +31,4 @@ netool-linux
 netool
 
 .zig-cache
+zig-out/bin/netool.pdb
