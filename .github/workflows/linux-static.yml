@@ -38,9 +38,9 @@ jobs:
 
       - name: Build static libpcap
         run: |
-          wget https://www.tcpdump.org/release/libpcap-${{ LIBPCAP_VERSION }}.tar.gz
-          tar xf libpcap-${{ LIBPCAP_VERSION }}.tar.gz
-          cd libpcap-${{ LIBPCAP_VERSION }}
+          wget https://www.tcpdump.org/release/libpcap-${{ env.LIBPCAP_VERSION }}.tar.gz
+          tar xf libpcap-${{ env.LIBPCAP_VERSION }}.tar.gz
+          cd libpcap-${{ env.LIBPCAP_VERSION }}
           ./configure --host=x86_64-linux-musl \
                       --disable-shared \
                       --prefix=$PREFIX \
