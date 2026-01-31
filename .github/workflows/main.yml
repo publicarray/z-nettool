@@ -50,7 +50,7 @@ jobs:
           BIN=zig-out/bin/netool
           EXT=""
           [[ "${{ matrix.target }}" == *windows* ]] && EXT=".exe"
-          mv $BIN $BIN-${{ matrix.target }}$EXT
+          mv $BIN$EXT $BIN-${{ matrix.target }}$EXT
 
       - name: Upload binary
         uses: actions/upload-artifact@v6
