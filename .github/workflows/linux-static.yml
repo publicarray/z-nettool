@@ -1,0 +1,66 @@
+name: Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - "**"
+  release:
+    types: [published, prereleased]
+  workflow_dispatch:
+
+env:
+  ZIG_VERSION: 0.15.2
+
+jobs:
+  build-linux-static:
+    runs-on: ubuntu-latest
+
+    container:
+      image: alpine:latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          apk add --no-cache \
+            libpcap-dev \
+            musl-dev \
+            build-base \
+            pkgconf
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build static binary
+        run: |
+          zig build \
+            -Dtarget=x86_64-linux-musl \ 
+            -Doptimize=ReleaseSmall \
+            -Dcpu=baseline \
+            -Dstatic=true
+
+      - name: Verify static
+        run: |
+          ldd zig-out/bin/netool || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: netool-linux-x86_64-static
+          path: zig-out/bin/netool
+
+      - name: rename file
+        run: |
+          mv zig-out/bin/netool zig-out/bin/netool-linux-x86_64-static
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: zig-out/bin/netool-linux-x86_64-static

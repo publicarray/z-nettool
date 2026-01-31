@@ -4,6 +4,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const is_static = b.option(bool, "static", "Build fully static binary") orelse false;
+
     const root_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -15,6 +17,9 @@ pub fn build(b: *std.Build) void {
         .root_module = root_mod,
     });
 
+    if (is_static) {
+        exe.linkage = .static;
+    }
     exe.linkLibC();
 
     if (target.result.os.tag == .linux) {

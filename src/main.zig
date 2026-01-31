@@ -18,7 +18,6 @@ pub fn main() !void {
     const lldpPacketCaptureTimeout = 30;
     const dhcpListenTimeout = 30;
 
-    // Zig 0.15+ stdout/stderr: you must provide a buffer and flush. :contentReference[oaicite:1]{index=1}
     var out_buf: [4096]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);
     const out = &out_writer.interface;
