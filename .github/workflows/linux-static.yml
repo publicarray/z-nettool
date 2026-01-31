@@ -1,4 +1,4 @@
-name: Release
+name: build-linux-static
 
 permissions:
   contents: write
@@ -41,10 +41,12 @@ jobs:
       - name: Build static binary
         run: |
           zig build \
-            -Dtarget=x86_64-linux-musl \ 
+            -Dtarget=x86_64-linux-musl \
             -Doptimize=ReleaseSmall \
             -Dcpu=baseline \
-            -Dstatic=true
+            -Dstatic=true \
+            --vermose \
+            --verbose-link
 
       - name: Verify static
         run: |
