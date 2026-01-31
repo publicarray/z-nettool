@@ -39,9 +39,7 @@ jobs:
             linux-headers \
             libnl3-dev \
             flex \
-            bison \
-            libnl3-dev \
-            libnl-genl-3-dev
+            bison
 
       - name: Build static libnl
         run: |
