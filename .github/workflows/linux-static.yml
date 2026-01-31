@@ -67,8 +67,8 @@ jobs:
       - name: Build static binary
         run: |
           zig build \
-            -target x86_64-linux-musl \
-            -OReleaseSmall \
+            -Dtarget=x86_64-linux-musl \
+            -Doptimize=ReleaseSmall \
             -Dcpu=baseline \
             -Dstatic=true \
             --search-prefix /tmp/musl-pcap
