@@ -13,6 +13,7 @@ on:
 
 env:
   ZIG_VERSION: 0.15.2
+  PREFIX: /tmp/musl-pcap
 
 jobs:
   build-linux-static:
@@ -28,7 +29,23 @@ jobs:
             libpcap-dev \
             musl-dev \
             build-base \
-            pkgconf
+            pkgconf \
+            git \
+            autoconf \
+            automake \
+            libtool
+
+      - name: Build static libpcap
+        run: |
+          git clone https://github.com/the-tcpdump-group/libpcap.git
+          cd libpcap
+          ./configure --host=x86_64-linux-musl \
+                      --enable-static \
+                      --disable-shared \
+                      --prefix=$PREFIX
+          make -j$(nproc)
+          make install
+          cd ..
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,16 +58,15 @@ jobs:
       - name: Build static binary
         run: |
           zig build \
-            -Dtarget=x86_64-linux-musl \
-            -Doptimize=ReleaseSmall \
+            -target x86_64-linux-musl \
+            -OReleaseSmall \
             -Dcpu=baseline \
             -Dstatic=true \
-            --verbose \
-            --verbose-link
+            --search-prefix /tmp/musl-pcap
 
       - name: Verify static
         run: |
-          ldd zig-out/bin/netool || true
+          ldd zig-out/bin/netool; file zig-out/bin/netool
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -20,16 +20,13 @@ pub fn build(b: *std.Build) void {
     if (is_static) {
         exe.linkage = .static;
     }
+
     exe.linkLibC();
 
     if (target.result.os.tag == .linux) {
-        if (is_static) {
-            exe.linkage = .static;
-            exe.addIncludePath(.{ .cwd_relative = "/usr/include" });
-            exe.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
-        }
         exe.linkSystemLibrary("pcap");
     }
+
     // Windows: embed manifest (requireAdministrator)
     if (target.result.os.tag == .windows) {
         exe.addWin32ResourceFile(.{
