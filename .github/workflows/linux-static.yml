@@ -13,6 +13,7 @@ on:
 
 env:
   ZIG_VERSION: 0.15.2
+  LIBPCAP_VERSION: 1.10.5
   PREFIX: /tmp/musl-pcap
 
 jobs:
@@ -37,12 +38,16 @@ jobs:
 
       - name: Build static libpcap
         run: |
-          git clone https://github.com/the-tcpdump-group/libpcap.git
-          cd libpcap
+          wget https://www.tcpdump.org/release/libpcap-${{ LIBPCAP_VERSION }}.tar.gz
+          tar xf libpcap-${{ LIBPCAP_VERSION }}.tar.gz
+          cd libpcap-${{ LIBPCAP_VERSION }}
           ./configure --host=x86_64-linux-musl \
-                      --enable-static \
                       --disable-shared \
-                      --prefix=$PREFIX
+                      --prefix=$PREFIX \
+                      --enable-ipv6 \
+                      --enable-usb \
+                      --with-libnl
+
           make -j$(nproc)
           make install
           cd ..
