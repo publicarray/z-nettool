@@ -2,7 +2,7 @@
 
 When cables aren’t labeled and documentation is missing, simple network troubleshooting can take far longer than it should. Questions like "Which switch and port am I connected to?" or "Is this link negotiating at Gigabit?" come up all the time.
 
-This cross-platform tool brings together common network checks in one place to help you diagnose issues faster from the client's point of view, no need to log into every switch.
+This cross-platform tool brings together common network checks in one place to help you diagnose issues faster from the client's point of view, no need to log into every switch (for those not yet on cloud managed network environments).
 
 ### Download the Latest Release
 
