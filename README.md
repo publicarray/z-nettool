@@ -6,11 +6,11 @@ This cross-platform tool brings together common network checks in one place to h
 
 ### Download the Latest Release
 
-- [Linux (amd64)](https://github.com/publicarray/netool/releases/download/latest/netool-x86_64-linux-musl)
-- [Linux (ARM64)](https://github.com/publicarray/netool/releases/download/latest/netool-aarch64-linux-musl)
-- [macOS (Apple Silicon - ARM64)](https://github.com/publicarray/netool/releases/download/latest/netool-aarch64-macos)
-- [macOS (Intel - amd64)](https://github.com/publicarray/netool/releases/download/latest/netool-x86_64-macos)
-- [Windows (amd64)](https://github.com/pablicarray/netool/releases/latest/download/netool-x86_64-windows-gnu.exe)
+- [Linux (amd64)](https://github.com/publicarray/z-nettool/releases/download/latest/netool-x86_64-linux-musl)
+- [Linux (ARM64)](https://github.com/publicarray/z-nettool/releases/download/latest/netool-aarch64-linux-musl)
+- [macOS (Apple Silicon - ARM64)](https://github.com/publicarray/z-nettool/releases/download/latest/netool-aarch64-macos)
+- [macOS (Intel - amd64)](https://github.com/publicarray/z-nettool/releases/download/latest/netool-x86_64-macos)
+- [Windows (amd64)](https://github.com/publicarray/z-nettool/releases/download/latest/netool-x86_64-windows-gnu.exe)
 
 ## Features
 
