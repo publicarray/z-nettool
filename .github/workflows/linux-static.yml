@@ -14,7 +14,8 @@ on:
 env:
   ZIG_VERSION: 0.15.2
   LIBPCAP_VERSION: 1.10.5
-  PREFIX: /tmp/musl-pcap
+  LIBNL_VERSION: 3.2.25
+  PREFIX: /tmp/prefix
 
 jobs:
   build-linux-static:
@@ -38,10 +39,22 @@ jobs:
             linux-headers \
             libnl3-dev \
             flex \
-            bison
+            bison \
+            libnl3-dev \
+            libnl-genl-3-dev
+
+      - name: Build static libnl
+        run: |
+          wget https://www.infradead.org/~tgr/libnl/files/libnl-${{ env.LIBNL_VERSION }}.tar.gz
+          tar xf libnl-${{ env.LIBNL_VERSION }}.tar.gz
+          cd libnl-${{ env.LIBNL_VERSION }}
+          ./configure --host=x86_64-linux-musl --disable-shared --enable-static --prefix=$PREFIX
+          make -j$(nproc)
+          make install
 
       - name: Build static libpcap
         run: |
+          export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig
           wget https://www.tcpdump.org/release/libpcap-${{ env.LIBPCAP_VERSION }}.tar.gz
           tar xf libpcap-${{ env.LIBPCAP_VERSION }}.tar.gz
           cd libpcap-${{ env.LIBPCAP_VERSION }}
@@ -54,7 +67,6 @@ jobs:
 
           make -j$(nproc)
           make install
-          cd ..
 
       - name: Checkout
         uses: actions/checkout@v4
