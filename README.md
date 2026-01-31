@@ -2,6 +2,12 @@
 
 A CLI tool that replicates some Netool PRO 2 functionality for network diagnostics.
 
+### Download the Latest Release
+
+- [Linux (amd64)](https://github.com/publicarray/netool/releases/latest/download/netool-linux)
+- [macOS (Apple Silicon - ARM64)](https://github.com/publicarray/netool/releases/latest/download/netool-macos)
+- [Windows (amd64)](https://github.com/pablicarray/netool/releases/latest/download/netool-windows.exe)
+
 ## Features
 
 - Network interface discovery with speed/duplex status
