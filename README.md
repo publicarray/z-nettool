@@ -15,7 +15,7 @@ A CLI tool that replicates some Netool PRO 2 functionality for network diagnosti
 - LLDP/CDP neighbor discovery
 - DHCP information gathering
 <!--- Port scanning and service detection nmap-->
-<!--- Packet capture capability pcap-->
+<!--- Packet capture capability-->
 <!--- Parallel execution for optimal performance-->
 - Plain text report generation
 

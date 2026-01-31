@@ -142,7 +142,7 @@ pub fn sendAndListenUdpWithResult(
 
     std.posix.bind(sock, &listen_addr.any, listen_addr.getOsSockLen()) catch |e| {
         if (e == error.AddressInUse and builtin.os.tag == .linux) {
-            try out.print("  [!] port 68 in use and pcap unavailable.\n", .{});
+            try out.print("  [!] port 68 in use and raw capture unavailable.\n", .{});
             try out.flush();
         }
         return e;
