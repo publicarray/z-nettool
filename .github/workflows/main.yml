@@ -17,9 +17,8 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
-      runs-on: ubuntu-latest
       fail-fast: false
       matrix:
         include:
