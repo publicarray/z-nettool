@@ -34,7 +34,11 @@ jobs:
             git \
             autoconf \
             automake \
-            libtool
+            libtool \
+            linux-headers \
+            libnl3-dev \
+            flex \
+            bison
 
       - name: Build static libpcap
         run: |
