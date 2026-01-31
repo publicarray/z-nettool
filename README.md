@@ -1,6 +1,9 @@
 # Network Diagnostic Tool
 
-A CLI tool that replicates some Netool PRO 2 functionality for network diagnostics.
+I work at an MSP, and we often deal with poorly labelled cables and limited documentation.
+A common question during troubleshooting is: which switch and port is this computer connected to? Is the link negotiating at Gigabit, or has it fallen back to Fast Ethernet (100 Mbps) or even 10 Mbps due to a bad cable or port?
+
+To make basic network troubleshooting faster, I built a small cross-platform tool that bundles common checks in one place.
 
 ### Download the Latest Release
 
@@ -19,7 +22,7 @@ A CLI tool that replicates some Netool PRO 2 functionality for network diagnosti
 <!--- Port scanning and service detection nmap-->
 <!--- Packet capture capability-->
 <!--- Parallel execution for optimal performance-->
-- Plain text report generation
+- Plain text report
 
 ## Usage
 
@@ -30,8 +33,6 @@ sudo ./netool
 # network report
 sudo ./netool -i eth0
 
-# force UDP DHCP (skip raw capture) on Linux
-sudo ./netool --dhcp-udp
 ```
 
 ## Example Report
@@ -79,17 +80,17 @@ https://ziglang.org/documentation/0.14.1/#Build-Mode
 ```bash
 zig build -Doptimize=ReleaseSmall
 # Intel macOS:
-zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSmall
+zig build -Dtarget=x86_64-macos -Dcpu=baseline -Doptimize=ReleaseSmall
 # Apple Silicon:
-zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSmall
+zig build -Dtarget=aarch64-macos -Dcpu=baseline -Doptimize=ReleaseSmall
 # Windows:
 zig build -Dtarget=x86_64-windows -Dcpu=baseline -Doptimize=ReleaseSmall
 # Linux:
-zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSmall
+zig build -Dtarget=x86_64-linux -Dcpu=baseline -Doptimize=ReleaseSmall
 ```
 
 ## Requirements
 
-- Root privileges for full functionality
+- Root/Administrator privileges
 - Zig 0.15.2
 - Linux: lldpctl
