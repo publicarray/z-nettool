@@ -81,7 +81,7 @@ jobs:
             -Doptimize=ReleaseSmall \
             -Dcpu=baseline \
             -Dstatic=true \
-            --search-prefix /tmp/musl-pcap
+            --search-prefix $PREFIX
 
       - name: Verify static
         run: |
