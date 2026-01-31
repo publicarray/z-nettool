@@ -1,9 +1,8 @@
 # Network Diagnostic Tool
 
-I work at an MSP, and we often deal with poorly labelled cables and limited documentation.
-A common question during troubleshooting is: which switch and port is this computer connected to? Is the link negotiating at Gigabit, or has it fallen back to Fast Ethernet (100 Mbps) or even 10 Mbps due to a bad cable or port?
+When cables aren’t labeled and documentation is missing, simple network troubleshooting can take far longer than it should. Questions like “Which switch and port am I connected to?” or “Why is this link stuck at 100 Mbps?” come up all the time.
 
-To make basic network troubleshooting faster, I built a small cross-platform tool that bundles common checks in one place.
+This cross-platform tool brings together common network checks in one place to help you diagnose issues faster from the client's point of view, no need to log into every switch.
 
 ### Download the Latest Release
 
