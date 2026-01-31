@@ -45,7 +45,7 @@ jobs:
             -Doptimize=ReleaseSmall \
             -Dcpu=baseline \
             -Dstatic=true \
-            --vermose \
+            --verbose \
             --verbose-link
 
       - name: Verify static
