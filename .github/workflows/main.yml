@@ -25,17 +25,17 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-linux-musl
             static: true
-          - os: windows-latest
-            target: x86_64-windows-gnu
-            static: true
-          - os: macos-latest
-            target: x86_64-macos
-            static: true
           - os: ubuntu-latest
             target: aarch64-linux-musl
             static: true
           - os: macos-latest
+            target: x86_64-macos
+            static: false
+          - os: macos-latest
             target: aarch64-macos
+            static: false
+          - os: windows-latest
+            target: x86_64-windows-gnu
             static: true
     steps:
       - name: Checkout
@@ -70,7 +70,7 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v6
         with:
-          name: netool-${{ matrix.os }}
+          name: netool-${{ matrix.target }}
           path: zig-out/bin/*
           if-no-files-found: warn
 
