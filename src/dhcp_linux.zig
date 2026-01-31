@@ -17,7 +17,7 @@ pub fn discoverAndListen(
         std.crypto.random.bytes(&xid_buf);
         const xid = std.mem.readInt(u32, &xid_buf, .big);
 
-        // Prefer pcap on Linux so we can see all offers (even if another DHCP client owns port 68).
+        // Prefer raw socket capture on Linux so we can see all offers (even if another DHCP client owns port 68).
         var send_ctx = SendCtx{
             .alloc = alloc,
             .iface_name = iface_name,
@@ -28,10 +28,10 @@ pub fn discoverAndListen(
         try out.print("  Listening for {d}s...\n", .{listen_seconds});
         try out.flush();
 
-        const pcap = @import("dhcp_pcap_linux.zig");
-        if (pcap.sniffOffersLinux(iface_name, send_ctx.xid, listen_seconds, &send_ctx, sendDiscoverCb)) |_| return else |e| {
-            // Fall back to UDP if pcap isn't available (permissions, missing libpcap, etc.)
-            try out.print("  [!] pcap sniff failed ({s}); falling back to UDP\n", .{@errorName(e)});
+        const raw = @import("dhcp_raw_linux.zig");
+        if (raw.sniffOffersLinux(iface_name, send_ctx.xid, listen_seconds, &send_ctx, sendDiscoverCb)) |_| return else |e| {
+            // Fall back to UDP if raw capture isn't available (permissions, etc.)
+            try out.print("  [!] raw capture failed ({s}); falling back to UDP\n", .{@errorName(e)});
             try out.flush();
         }
     }

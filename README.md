@@ -28,7 +28,7 @@ sudo ./netool
 # network report
 sudo ./netool -i eth0
 
-# force UDP DHCP (skip pcap) on Linux
+# force UDP DHCP (skip raw capture) on Linux
 sudo ./netool --dhcp-udp
 ```
 
@@ -90,5 +90,4 @@ zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSmall
 
 - Root privileges for full functionality
 - Zig 0.15.2
-- Linux: libpcap
 - Linux: lldpctl

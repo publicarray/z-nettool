@@ -23,13 +23,6 @@ pub fn build(b: *std.Build) void {
 
     exe.linkLibC();
 
-    if (target.result.os.tag == .linux) {
-        exe.linkSystemLibrary("pcap");
-        if (is_static) {
-            exe.linkSystemLibrary("nl-3");
-        }
-    }
-
     // Windows: embed manifest (requireAdministrator)
     if (target.result.os.tag == .windows) {
         exe.addWin32ResourceFile(.{
